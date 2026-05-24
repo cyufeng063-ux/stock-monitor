@@ -47,10 +47,57 @@ def _code_to_sina(code: str) -> str:
     return "sz" + code
 
 
-def fetch_realtime_quotes(stocks: list[dict]) -> list[dict]:
-    """通过新浪API拉取实时行情。"""
-    print("[1/3] 拉取实时行情 (新浪)...")
-    codes = [s["code"] for s in stocks]
+def _code_to_tencent(code: str) -> str:
+    """600519 -> sh600519, 000858 -> sz000858"""
+    if code.startswith(("6", "5", "9")):
+        return "sh" + code
+    return "sz" + code
+
+
+def _format_volume(vol_val) -> str:
+    try:
+        vol = int(vol_val)
+        if vol >= 1e8:
+            return f"{vol/1e8:.2f}亿"
+        elif vol >= 1e4:
+            return f"{vol/1e4:.2f}万"
+        return str(vol)
+    except (ValueError, TypeError):
+        return str(vol_val) if vol_val else "—"
+
+
+def _format_amount(amt_val) -> str:
+    try:
+        amt = float(amt_val)
+        if amt >= 1e8:
+            return f"{amt/1e8:.2f}亿"
+        elif amt >= 1e4:
+            return f"{amt/1e4:.2f}万"
+        return f"{amt:.2f}"
+    except (ValueError, TypeError):
+        return str(amt_val) if amt_val else "—"
+
+
+def _make_quote_dict(code, name, price, prev_close, change, change_pct,
+                     open_price, high, low, volume, amount) -> dict:
+    return {
+        "代码": code,
+        "名称": name,
+        "最新价": f"{price:.2f}" if price else "—",
+        "涨跌幅": f"{change_pct:+.2f}%",
+        "涨跌额": f"{change:+.2f}",
+        "今开": open_price if open_price and float(open_price) > 0 else "—",
+        "昨收": str(prev_close) if prev_close else "—",
+        "最高": str(high) if high else "—",
+        "最低": str(low) if low else "—",
+        "成交量": _format_volume(volume),
+        "成交额": _format_amount(amount),
+        "_涨跌数值": change_pct,
+    }
+
+
+def _fetch_sina_quotes(codes: list[str]) -> list[dict] | None:
+    """新浪行情源，失败返回None。"""
     sina_codes = [_code_to_sina(c) for c in codes]
     url = "https://hq.sinajs.cn/list=" + ",".join(sina_codes)
 
@@ -60,14 +107,13 @@ def fetch_realtime_quotes(stocks: list[dict]) -> list[dict]:
             r.encoding = "gbk"
             if r.status_code == 200 and r.text.strip():
                 break
-        except Exception as e:
+        except Exception:
             if attempt < 2:
                 time.sleep((attempt + 1) * 3)
-            else:
-                print(f"  新浪行情拉取失败: {e}")
-                return []
-    else:
-        return []
+
+    if r.status_code != 200 or not r.text.strip():
+        print("  新浪行情源无数据")
+        return None
 
     results = []
     lines = r.text.strip().split("\n")
@@ -80,7 +126,6 @@ def fetch_realtime_quotes(stocks: list[dict]) -> list[dict]:
             continue
 
         name = parts[0]
-        # 从新浪代码反查原始代码
         raw_code = ""
         for c in codes:
             if _code_to_sina(c) in line:
@@ -93,84 +138,115 @@ def fetch_realtime_quotes(stocks: list[dict]) -> list[dict]:
             change = price - prev_close
             change_pct = (change / prev_close * 100) if prev_close else 0
         except (ValueError, ZeroDivisionError):
-            price, change, change_pct = 0, 0, 0
+            price, prev_close, change, change_pct = 0, 0, 0, 0
 
-        volume_val = parts[8]  # 成交量 (股)
-        amount_val = parts[9]  # 成交额
+        results.append(_make_quote_dict(
+            raw_code or parts[0], name, price, prev_close, change, change_pct,
+            parts[1], parts[4], parts[5], parts[8], parts[9],
+        ))
 
-        # 格式化成交量
+    if results:
+        print(f"  新浪行情: {len(results)} 只")
+        return results
+    return None
+
+
+def _fetch_tencent_quotes(codes: list[str]) -> list[dict] | None:
+    """腾讯财经行情源，失败返回None。"""
+    tc_codes = [_code_to_tencent(c) for c in codes]
+    url = "http://qt.gtimg.cn/q=" + ",".join(tc_codes)
+
+    try:
+        r = session.get(url, timeout=10)
+        r.encoding = "gbk"
+        if r.status_code != 200 or not r.text.strip():
+            print("  腾讯行情源无数据")
+            return None
+    except Exception as e:
+        print(f"  腾讯行情源失败: {e}")
+        return None
+
+    results = []
+    for line in r.text.strip().split("\n"):
+        match = re.search(r'="(.+)"', line)
+        if not match:
+            continue
+        parts = match.group(1).split("~")
+        if len(parts) < 40:
+            continue
+
+        raw_code = parts[2] if len(parts) > 2 else ""
+        name = parts[1] if len(parts) > 1 else ""
+
         try:
-            vol = int(volume_val)
-            if vol >= 1e8:
-                volume_str = f"{vol/1e8:.2f}亿"
-            elif vol >= 1e4:
-                volume_str = f"{vol/1e4:.2f}万"
-            else:
-                volume_str = str(vol)
-        except ValueError:
-            volume_str = volume_val
+            price = float(parts[3])
+            prev_close = float(parts[4])
+            change = price - prev_close
+            change_pct = (change / prev_close * 100) if prev_close else 0
+            open_price = parts[5]
+            high = parts[33]
+            low = parts[34]
+            volume = parts[6]  # 成交量(股)
+            # 腾讯成交额 [57] 为万元，转元
+            amount_val = float(parts[57]) * 10000 if parts[57] else 0
+        except (ValueError, ZeroDivisionError, IndexError):
+            continue
 
-        # 格式化成交额
-        try:
-            amt = float(amount_val)
-            if amt >= 1e8:
-                amount_str = f"{amt/1e8:.2f}亿"
-            elif amt >= 1e4:
-                amount_str = f"{amt/1e4:.2f}万"
-            else:
-                amount_str = f"{amt:.2f}"
-        except ValueError:
-            amount_str = amount_val
+        results.append(_make_quote_dict(
+            raw_code, name, price, prev_close, change, change_pct,
+            open_price, high, low, volume, str(amount_val),
+        ))
 
-        results.append({
-            "代码": raw_code or parts[0],
-            "名称": name,
-            "最新价": f"{price:.2f}" if price else "—",
-            "涨跌幅": f"{change_pct:+.2f}%",
-            "涨跌额": f"{change:+.2f}",
-            "今开": parts[1] if float(parts[1]) > 0 else "—",
-            "昨收": parts[2],
-            "最高": parts[4],
-            "最低": parts[5],
-            "成交量": volume_str,
-            "成交额": amount_str,
-            "_涨跌数值": change_pct,
-        })
+    if results:
+        print(f"  腾讯行情: {len(results)} 只")
+        return results
+    return None
 
-    print(f"  获取到 {len(results)} 只股票的实时行情")
-    return results
+
+def fetch_realtime_quotes(stocks: list[dict]) -> list[dict]:
+    """拉取实时行情，新浪优先，腾讯备用。"""
+    print("[1/3] 拉取实时行情...")
+    codes = [s["code"] for s in stocks]
+
+    # 首选新浪
+    results = _fetch_sina_quotes(codes)
+    if results:
+        return results
+
+    # 备用腾讯
+    print("  切换到腾讯财经备用源...")
+    results = _fetch_tencent_quotes(codes)
+    if results:
+        return results
+
+    print("  所有行情源均失败")
+    return []
 
 
 # ═══════════════════════════════════════════════════════
-# 公告 — 巨潮资讯网
+# 公告 — 东方财富 + 巨潮资讯 (互为备份)
 # ═══════════════════════════════════════════════════════
 
-def fetch_announcements(codes: list[str]) -> list[dict]:
-    """拉取追踪股票的近期公告 (东方财富)。"""
-    print("[2/3] 拉取公司公告...")
+def _fetch_eastmoney_announcements(codes: list[str]) -> list[dict]:
+    """东方财富公告源。"""
     all_notices = []
-
     for code in codes:
         try:
             url = "https://np-anotice-stock.eastmoney.com/api/security/ann"
             params = {
                 "page_size": 10, "page_index": 1,
-                "stock_list": code,
-                "ann_type": "A",
+                "stock_list": code, "ann_type": "A",
             }
             r = session.get(url, params=params, timeout=15)
             if r.status_code != 200:
                 continue
-            data = r.json()
-            items = data.get("data", {}).get("list", [])
+            items = r.json().get("data", {}).get("list", [])
             for item in items:
-                # 验证公告确实属于当前股票
                 item_codes = item.get("codes", [])
                 if not item_codes or not any(
                     c.get("stock_code", "") == code for c in item_codes
                 ):
                     continue
-
                 art_code = item.get("art_code", "")
                 raw_time = item.get("display_time", "") or item.get("notice_date", "") or ""
                 detail_url = f"https://data.eastmoney.com/notices/detail/{code}/{art_code}.html" if art_code else ""
@@ -182,11 +258,78 @@ def fetch_announcements(codes: list[str]) -> list[dict]:
                     "详情链接": detail_url,
                 })
         except Exception as e:
-            print(f"  公告获取失败 {code}: {e}")
+            print(f"  东方财富公告获取失败 {code}: {e}")
         time.sleep(0.3)
-
-    print(f"  获取到 {len(all_notices)} 条公告")
     return all_notices
+
+
+def _fetch_cninfo_announcements(codes: list[str]) -> list[dict]:
+    """巨潮资讯公告源（证监会指定披露平台）。"""
+    all_notices = []
+    for code in codes:
+        try:
+            url = "http://www.cninfo.com.cn/new/fulltextSearch/full"
+            r = session.post(url, data={
+                "searchkey": code,
+                "sdate": "",
+                "edate": "",
+                "isfulltext": "false",
+                "sortName": "pubdate",
+                "sortType": "desc",
+                "pageNum": 1,
+                "pageSize": 10,
+            }, headers={
+                "Referer": "http://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/notice",
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+            }, timeout=15)
+            if r.status_code != 200:
+                continue
+            items = r.json().get("announcements") or []
+            for item in items:
+                sec_code = item.get("secCode", "")
+                if sec_code != code:
+                    continue
+                ts = item.get("announcementTime", 0)
+                dt_str = datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S") if ts else ""
+                org_id = item.get("orgId", "")
+                ann_id = item.get("announcementId", "")
+                title = re.sub(r"<[^>]+>", "", item.get("announcementTitle", ""))
+                detail_url = ""
+                if sec_code and ann_id and org_id:
+                    detail_url = f"http://www.cninfo.com.cn/new/disclosure/detail?stockCode={sec_code}&announcementId={ann_id}&orgId={org_id}"
+                all_notices.append({
+                    "股票代码": code,
+                    "标题": title,
+                    "日期": dt_str[:10],
+                    "发布时间": dt_str,
+                    "详情链接": detail_url,
+                })
+        except Exception as e:
+            print(f"  巨潮公告获取失败 {code}: {e}")
+        time.sleep(0.3)
+    return all_notices
+
+
+def fetch_announcements(codes: list[str]) -> list[dict]:
+    """拉取追踪股票的近期公告，东方财富优先，巨潮备份+补充。"""
+    print("[2/3] 拉取公司公告...")
+
+    # 首选东方财富
+    notices = _fetch_eastmoney_announcements(codes)
+    if notices:
+        print(f"  东方财富: {len(notices)} 条公告")
+        return notices
+
+    # 备用巨潮
+    print("  切换到巨潮资讯备用源...")
+    notices = _fetch_cninfo_announcements(codes)
+    if notices:
+        print(f"  巨潮资讯: {len(notices)} 条公告")
+        return notices
+
+    print("  所有公告源均失败")
+    return []
 
 
 
