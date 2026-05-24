@@ -315,7 +315,7 @@ def build_html(quotes: list[dict], announcements: list[dict], news: list[dict]) 
 </style></head><body>
 <div class="container">
   <div class="header">
-    <h1>A股信息日报</h1>
+    <h1>陈姝宝的A股信息收集</h1>
     <p>数据采集时间: {now} &nbsp;|&nbsp; 数据来源: 新浪财经/东方财富 &nbsp;|&nbsp; 仅供参考</p>
   </div>
 
@@ -362,7 +362,7 @@ def send_email(html: str, config: dict):
         return False
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"A股信息日报 — {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"陈姝宝的A股信息收集 — {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = email_cfg["sender"]
     msg["To"] = ", ".join(email_cfg["receivers"])
     msg.attach(MIMEText(html, "html", "utf-8"))
