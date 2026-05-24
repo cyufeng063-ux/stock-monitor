@@ -416,21 +416,22 @@ def build_html(quotes: list[dict], announcements: list[dict],
         stock_ai = interp.get("stocks", {})
         quote_rows = ""
         for q in quotes:
+            code = q['代码']
             pct = q.get("_涨跌数值", 0)
             color = "#e74c3c" if pct > 0 else "#27ae60" if pct < 0 else "#666"
-            ai_text = stock_ai.get(q['代码'], '')
+            ai_text = stock_ai.get(code, '')
             ai_cell = f'<div style="color:#888;font-size:11px;font-style:italic;margin-top:2px">AI: {ai_text}</div>' if ai_text else ''
             quote_rows += f"""
-            <tr>
-              <td>{q['代码']}<br><span style="color:#888;font-size:11px">{q['名称']}</span></td>
-              <td style="color:#2c3e50;font-weight:bold;font-size:15px">{q['最新价']}</td>
-              <td style="color:{color}">{q['涨跌幅']}</td>
-              <td style="color:{color}">{q['涨跌额']}</td>
-              <td>{q.get('今开', '—')}</td>
-              <td>{q.get('最高', '—')}</td>
-              <td>{q.get('最低', '—')}</td>
-              <td>{q.get('成交量', '—')}</td>
-              <td>{q.get('成交额', '—')}</td>
+            <tr id="row-{code}">
+              <td>{code}<br><span style="color:#888;font-size:11px">{q['名称']}</span></td>
+              <td id="price-{code}" style="color:#2c3e50;font-weight:bold;font-size:15px">{q['最新价']}</td>
+              <td id="chgpct-{code}" style="color:{color}">{q['涨跌幅']}</td>
+              <td id="chg-{code}" style="color:{color}">{q['涨跌额']}</td>
+              <td id="open-{code}">{q.get('今开', '—')}</td>
+              <td id="high-{code}">{q.get('最高', '—')}</td>
+              <td id="low-{code}">{q.get('最低', '—')}</td>
+              <td id="vol-{code}">{q.get('成交量', '—')}</td>
+              <td id="amount-{code}">{q.get('成交额', '—')}</td>
               <td style="color:#666;font-size:11px;max-width:120px">{ai_text}</td>
             </tr>"""
     else:
@@ -498,7 +499,14 @@ def build_html(quotes: list[dict], announcements: list[dict],
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    return f"""<!DOCTYPE html>
+    # 构建前端腾讯行情映射
+    tc_entries = []
+    for q in quotes:
+        code = q['代码']
+        tc_entries.append(f'"{code}": "{_code_to_tencent(code)}"')
+    tc_map_js = "{" + ", ".join(tc_entries) + "}"
+
+    html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
   body {{ font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; background: #f5f6fa; padding: 20px; }}
@@ -541,7 +549,7 @@ def build_html(quotes: list[dict], announcements: list[dict],
   </div>
 
   <div class="refresh-bar">
-    <span>刷新倒计时: <span id="timer">30</span>秒</span>
+    <span>行情实时更新 &nbsp;|&nbsp; 整页刷新: <span id="timer">300</span>秒</span>
     <span style="float:right">数据采集: {now}</span>
   </div>
 
@@ -552,14 +560,72 @@ def build_html(quotes: list[dict], announcements: list[dict],
   </div>
 </div>
 <script>
-  let sec = 30;
-  setInterval(function() {{
+// ── 股票代码-腾讯格式映射 (由Python端填充) ──
+var TC_MAP = {tc_map_js};
+var PAGE_REFRESH = 300;
+var QUOTE_IV = 5;
+
+function _fmtVol(v) {{
+    if (v >= 1e8) return (v / 1e8).toFixed(2) + "亿";
+    if (v >= 1e4) return (v / 1e4).toFixed(2) + "万";
+    return String(v);
+}}
+function _fmtAmt(v) {{
+    if (v >= 1e8) return (v / 1e8).toFixed(2) + "亿";
+    if (v >= 1e4) return (v / 1e4).toFixed(2) + "万";
+    return v.toFixed(2);
+}}
+
+function updateQuotes() {{
+    var codes = Object.values(TC_MAP).join(",");
+    if (!codes) return;
+    var s = document.createElement("script");
+    s.src = "https://qt.gtimg.cn/q=" + codes + "&_=" + Date.now();
+    s.onload = function() {{
+        Object.keys(TC_MAP).forEach(function(code) {{
+            var raw = window["v_" + TC_MAP[code]];
+            if (!raw) return;
+            var p = raw.split("~");
+            if (p.length < 40) return;
+
+            var price = parseFloat(p[3]), prev = parseFloat(p[4]);
+            var chg = price - prev;
+            var pct = prev ? (chg / prev * 100) : 0;
+            var color = pct > 0 ? "#e74c3c" : pct < 0 ? "#27ae60" : "#666";
+
+            var set = function(id, txt, c) {{
+                var el = document.getElementById(id);
+                if (el) {{ el.textContent = txt; if (c) el.style.color = c; }}
+            }};
+
+            set("price-" + code, price.toFixed(2));
+            set("chgpct-" + code, (pct > 0 ? "+" : "") + pct.toFixed(2) + "%", color);
+            set("chg-" + code, (chg > 0 ? "+" : "") + chg.toFixed(2), color);
+            set("open-" + code, parseFloat(p[5]) > 0 ? p[5] : "—");
+            set("high-" + code, p[33]);
+            set("low-" + code, p[34]);
+            set("vol-" + code, _fmtVol(parseInt(p[6]) || 0));
+            set("amount-" + code, _fmtAmt((parseFloat(p[57]) || 0) * 10000));
+        }});
+        s.remove();
+    }};
+    s.onerror = function() {{ s.remove(); }};
+    document.head.appendChild(s);
+}}
+
+var sec = PAGE_REFRESH;
+setInterval(function() {{
     sec--;
-    document.getElementById('timer').textContent = sec;
+    document.getElementById("timer").textContent = sec;
     if (sec <= 0) location.reload();
-  }}, 1000);
+}}, 1000);
+
+setInterval(updateQuotes, QUOTE_IV * 1000);
+updateQuotes();
 </script>
 </body></html>"""
+
+    return html
 
 
 def send_email(html: str, config: dict):
@@ -608,11 +674,6 @@ _cached_html = ""
 _cache_lock = threading.Lock()
 
 
-def _inject_auto_refresh(html: str, interval: int = 30) -> str:
-    return html.replace("</head>",
-        f'<meta http-equiv="refresh" content="{interval}">\n</head>')
-
-
 def _refresh_loop(config: dict, interval: int):
     """后台线程：每interval秒拉取数据，更新缓存。"""
     global _cached_html
@@ -621,7 +682,6 @@ def _refresh_loop(config: dict, interval: int):
             print(f"\n{'='*50}")
             print(f"  [后台刷新] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             html = run_collect(config)
-            html = _inject_auto_refresh(html, interval)
             with _cache_lock:
                 _cached_html = html
             print(f"  [后台刷新] 完成，下次刷新: {interval}秒后")
@@ -726,7 +786,6 @@ def run():
         print(f"  [初始采集] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         try:
             html = run_collect(config)
-            html = _inject_auto_refresh(html, 30)
             with _cache_lock:
                 _cached_html = html
             print("  初始数据采集完成")
