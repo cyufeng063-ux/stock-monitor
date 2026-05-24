@@ -236,23 +236,100 @@ def fetch_news() -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════
+# AI 解读
+# ═══════════════════════════════════════════════════════
+
+def generate_interpretations(quotes: list[dict], announcements: list[dict],
+                             news: list[dict], ai_cfg: dict) -> dict:
+    """调用AI生成解读，失败时返回空结果。"""
+    if not ai_cfg.get("enabled"):
+        print("[AI] 未启用，跳过解读")
+        return {}
+
+    print("[AI] 生成解读...")
+    api_key = ai_cfg.get("api_key", "")
+    api_url = ai_cfg.get("api_url", "https://api.deepseek.com/v1/chat/completions")
+    model = ai_cfg.get("model", "deepseek-chat")
+
+    if not api_key or "你的" in api_key:
+        print("  AI API Key 未配置，跳过解读")
+        return {}
+
+    # 构建prompt
+    stock_lines = ""
+    for q in quotes:
+        stock_lines += f"- {q['名称']}({q['代码']}): 最新价{q['最新价']}，涨跌幅{q['涨跌幅']}\n"
+
+    notice_lines = ""
+    for a in announcements[:10]:
+        notice_lines += f"- [{a['股票代码']}] {a['标题'][:60]}\n"
+
+    news_lines = ""
+    for n in news[:10]:
+        news_lines += f"- {n['标题'][:60]}\n"
+
+    prompt = f"""你是一个A股市场分析助手。请为以下数据生成简短解读（每条15字以内）：
+
+【股票行情】
+{stock_lines or '无'}
+
+【公告】
+{notice_lines or '无'}
+
+【新闻】
+{news_lines or '无'}
+
+请以JSON格式返回解读，key分别为stocks(对象，key为股票代码)、announcements(数组，与输入顺序对应)、news(数组，与输入顺序对应)。
+只返回JSON，不要其他文字。"""
+
+    try:
+        r = session.post(api_url, json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7,
+            "max_tokens": 800,
+        }, headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }, timeout=30)
+        if r.status_code == 200:
+            content = r.json()["choices"][0]["message"]["content"]
+            content = content.strip()
+            if content.startswith("```"):
+                content = content.split("\n", 1)[1].rsplit("\n```", 1)[0]
+            result = json.loads(content)
+            print(f"  AI解读生成成功")
+            return result
+        else:
+            print(f"  AI API返回错误: {r.status_code} {r.text[:200]}")
+            return {}
+    except Exception as e:
+        print(f"  AI解读失败: {e}")
+        return {}
+
+
+# ═══════════════════════════════════════════════════════
 # HTML 邮件
 # ═══════════════════════════════════════════════════════
 
-def build_html(quotes: list[dict], announcements: list[dict], news: list[dict]) -> str:
+def build_html(quotes: list[dict], announcements: list[dict], news: list[dict],
+               interpretations: dict = None) -> str:
     """拼装 HTML 邮件正文。"""
+    interp = interpretations or {}
 
     # ── 行情表格 ──
     if quotes:
+        stock_ai = interp.get("stocks", {})
         quote_rows = ""
         for q in quotes:
             pct = q.get("_涨跌数值", 0)
             color = "#e74c3c" if pct > 0 else "#27ae60" if pct < 0 else "#666"
+            ai_text = stock_ai.get(q['代码'], '')
+            ai_cell = f'<div style="color:#888;font-size:11px;font-style:italic;margin-top:2px">AI: {ai_text}</div>' if ai_text else ''
             quote_rows += f"""
             <tr>
-              <td>{q['代码']}</td>
-              <td><b>{q['名称']}</b></td>
-              <td style="color:#2c3e50;font-weight:bold">{q['最新价']}</td>
+              <td>{q['代码']}<br><span style="color:#888;font-size:11px">{q['名称']}</span></td>
+              <td style="color:#2c3e50;font-weight:bold;font-size:15px">{q['最新价']}</td>
               <td style="color:{color}">{q['涨跌幅']}</td>
               <td style="color:{color}">{q['涨跌额']}</td>
               <td>{q.get('今开', '—')}</td>
@@ -260,32 +337,41 @@ def build_html(quotes: list[dict], announcements: list[dict], news: list[dict]) 
               <td>{q.get('最低', '—')}</td>
               <td>{q.get('成交量', '—')}</td>
               <td>{q.get('成交额', '—')}</td>
+              <td style="color:#666;font-size:11px;max-width:120px">{ai_text}</td>
             </tr>"""
     else:
-        quote_rows = '<tr><td colspan="10" style="text-align:center;color:#999">今日无行情数据（可能非交易日）</td></tr>'
+        quote_rows = '<tr><td colspan="11" style="text-align:center;color:#999">今日无行情数据（可能非交易日）</td></tr>'
 
     # ── 公告列表 ──
     if announcements:
+        notice_ai = interp.get("announcements", [])
         notice_items = ""
-        for a in announcements:
+        for i, a in enumerate(announcements):
+            ai_text = notice_ai[i] if i < len(notice_ai) else ""
+            ai_line = f'<div style="color:#888;font-size:11px;font-style:italic;margin-top:1px">AI: {ai_text}</div>' if ai_text else ''
             notice_items += f"""
             <li>
               <span class="tag">{a['股票代码']}</span>
               {a['标题']}
               <span style="color:#999;font-size:12px">({a['日期']})</span>
+              {ai_line}
             </li>"""
     else:
         notice_items = '<li style="color:#999">近期无新公告</li>'
 
     # ── 新闻列表 ──
     if news:
+        news_ai = interp.get("news", [])
         news_items = ""
-        for n in news[:25]:
+        for i, n in enumerate(news[:25]):
             summary = n.get('摘要', '')[:150]
+            ai_text = news_ai[i] if i < len(news_ai) else ""
+            ai_line = f'<div style="color:#888;font-size:11px;font-style:italic;margin-top:1px">AI: {ai_text}</div>' if ai_text else ''
             news_items += f"""
             <li>
               <b>{n['标题']}</b>
               <div style="color:#666;font-size:13px;margin-top:2px">{summary}</div>
+              {ai_line}
               <span style="color:#999;font-size:11px">{n.get('时间','')} | {n.get('来源','')}</span>
             </li>"""
     else:
@@ -312,6 +398,7 @@ def build_html(quotes: list[dict], announcements: list[dict], news: list[dict]) 
   li:last-child {{ border-bottom: none; }}
   .tag {{ display: inline-block; background: #e8f4fd; color: #2980b9; padding: 1px 6px; border-radius: 3px; font-size: 11px; margin-right: 6px; }}
   .disclaimer {{ text-align: center; color: #aaa; font-size: 11px; padding: 20px; line-height: 1.8; }}
+  .refresh-bar {{ background: #fff; padding: 10px 20px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #eee; }}
 </style></head><body>
 <div class="container">
   <div class="header">
@@ -323,7 +410,7 @@ def build_html(quotes: list[dict], announcements: list[dict], news: list[dict]) 
     <div class="card-title">追踪股票行情</div>
     <div style="overflow-x:auto">
     <table>
-      <tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th><th>今开</th><th>最高</th><th>最低</th><th>成交量</th><th>成交额</th></tr>
+      <tr><th>代码/名称</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th><th>今开</th><th>最高</th><th>最低</th><th>成交量</th><th>成交额</th><th>AI解读</th></tr>
       {quote_rows}
     </table>
     </div>
@@ -339,12 +426,25 @@ def build_html(quotes: list[dict], announcements: list[dict], news: list[dict]) 
     <ul>{news_items}</ul>
   </div>
 
+  <div class="refresh-bar">
+    <span>刷新倒计时: <span id="timer">30</span>秒</span>
+    <span style="float:right">数据采集: {now}</span>
+  </div>
+
   <div class="disclaimer">
     本邮件为自动化数据采集结果，仅收集公开市场信息<br>
     不构成任何投资建议，请独立判断与决策<br>
     数据可能存在延迟，以交易所官方数据为准
   </div>
 </div>
+<script>
+  let sec = 30;
+  setInterval(function() {{
+    sec--;
+    document.getElementById('timer').textContent = sec;
+    if (sec <= 0) location.reload();
+  }}, 1000);
+</script>
 </body></html>"""
 
 
@@ -441,7 +541,10 @@ def run_collect(config: dict) -> str:
     announcements = fetch_announcements(codes)
     news = fetch_news()
 
-    return build_html(quotes, announcements, news)
+    ai_cfg = config.get("ai", {})
+    interpretations = generate_interpretations(quotes, announcements, news, ai_cfg)
+
+    return build_html(quotes, announcements, news, interpretations)
 
 
 def run():
@@ -477,9 +580,9 @@ def run():
         port = args.serve
         # 注入自动刷新
         refresh_html = html.replace("</head>",
-            '<meta http-equiv="refresh" content="60">\n</head>')
+            '<meta http-equiv="refresh" content="30">\n</head>')
         WEB_HTML.write_text(refresh_html, encoding="utf-8")
-        print(f"  每60秒自动刷新")
+        print(f"  每30秒自动刷新")
 
         print("=" * 50)
         start_server(port)

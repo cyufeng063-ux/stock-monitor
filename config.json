@@ -15,6 +15,14 @@
     "receivers": ["接收邮箱@qq.com"]
   },
 
+  "ai": {
+    "_comment": "AI解读功能，使用DeepSeek API（兼容OpenAI格式），enabled=true开启",
+    "enabled": false,
+    "api_key": "你的DeepSeek API Key",
+    "api_url": "https://api.deepseek.com/v1/chat/completions",
+    "model": "deepseek-chat"
+  },
+
   "schedule": {
     "_comment": "参考时间, 定时需配合系统计划任务",
     "market_open_check": "09:30",
