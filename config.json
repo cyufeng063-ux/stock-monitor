@@ -1,0 +1,25 @@
+{
+  "_comment": "A股信息收集器配置 | stocks: 填入追踪的A股代码 | email: 配置后自动发邮件 | schedule: 配合Windows任务计划使用",
+
+  "stocks": [
+    {"code": "600519", "name": "贵州茅台"},
+    {"code": "000858", "name": "五粮液"},
+    {"code": "300750", "name": "宁德时代"},
+    {"code": "603778", "name": "国晟科技"}
+  ],
+
+  "email": {
+    "_comment": "QQ邮箱需开启SMTP获取授权码",
+    "smtp_host": "smtp.qq.com",
+    "smtp_port": 587,
+    "sender": "你的邮箱@qq.com",
+    "password": "你的SMTP授权码",
+    "receivers": ["接收邮箱@qq.com"]
+  },
+
+  "schedule": {
+    "_comment": "参考时间, 定时需配合系统计划任务",
+    "market_open_check": "09:30",
+    "market_close_summary": "15:30"
+  }
+}
