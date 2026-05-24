@@ -49,7 +49,7 @@ def _code_to_sina(code: str) -> str:
 
 def fetch_realtime_quotes(stocks: list[dict]) -> list[dict]:
     """通过新浪API拉取实时行情。"""
-    print("[1/4] 拉取实时行情 (新浪)...")
+    print("[1/3] 拉取实时行情 (新浪)...")
     codes = [s["code"] for s in stocks]
     sina_codes = [_code_to_sina(c) for c in codes]
     url = "https://hq.sinajs.cn/list=" + ",".join(sina_codes)
@@ -147,26 +147,39 @@ def fetch_realtime_quotes(stocks: list[dict]) -> list[dict]:
 
 def fetch_announcements(codes: list[str]) -> list[dict]:
     """拉取追踪股票的近期公告 (东方财富)。"""
-    print("[2/4] 拉取公司公告...")
+    print("[2/3] 拉取公司公告...")
     all_notices = []
 
     for code in codes:
         try:
-            url = (
-                "https://np-anotice-stock.eastmoney.com/api/security/ann?"
-                "page_size=5&page_index=1&"
-                f"stock_list={code}&begin_time=&end_time="
-            )
-            r = session.get(url, timeout=15)
+            url = "https://np-anotice-stock.eastmoney.com/api/security/ann"
+            params = {
+                "page_size": 10, "page_index": 1,
+                "stock_list": code,
+                "ann_type": "A",
+            }
+            r = session.get(url, params=params, timeout=15)
             if r.status_code != 200:
                 continue
             data = r.json()
             items = data.get("data", {}).get("list", [])
             for item in items:
+                # 验证公告确实属于当前股票
+                item_codes = item.get("codes", [])
+                if not item_codes or not any(
+                    c.get("stock_code", "") == code for c in item_codes
+                ):
+                    continue
+
+                art_code = item.get("art_code", "")
+                raw_time = item.get("display_time", "") or item.get("notice_date", "") or ""
+                detail_url = f"https://data.eastmoney.com/notices/detail/{code}/{art_code}.html" if art_code else ""
                 all_notices.append({
                     "股票代码": code,
                     "标题": item.get("title_ch", item.get("title", "")),
                     "日期": (item.get("notice_date", "") or "")[:10],
+                    "发布时间": raw_time,
+                    "详情链接": detail_url,
                 })
         except Exception as e:
             print(f"  公告获取失败 {code}: {e}")
@@ -176,64 +189,7 @@ def fetch_announcements(codes: list[str]) -> list[dict]:
     return all_notices
 
 
-# ═══════════════════════════════════════════════════════
-# 新闻 — 东方财富 / 新浪
-# ═══════════════════════════════════════════════════════
 
-def fetch_news() -> list[dict]:
-    """拉取最新财经新闻 (多个源)。"""
-    print("[3/4] 拉取财经新闻...")
-
-    # 源1: 东方财富
-    try:
-        url = "https://np-listpage.eastmoney.com/api/finance/news"
-        params = {
-            "page_size": 25, "page_index": 1,
-            "client": "web", "biz": "finance_news",
-        }
-        r = session.get(url, params=params, timeout=15)
-        if r.status_code == 200:
-            items = r.json().get("data", {}).get("list", [])
-            if items:
-                news_list = []
-                for item in items:
-                    news_list.append({
-                        "标题": item.get("title", ""),
-                        "摘要": (item.get("digest", "") or item.get("summary", ""))[:200],
-                        "时间": item.get("show_time", item.get("publish_time", "")),
-                        "来源": "东方财富",
-                    })
-                print(f"  获取到 {len(news_list)} 条新闻 (东方财富)")
-                return news_list
-    except Exception as e:
-        print(f"  东方财富新闻源失败: {e}")
-
-    # 源2: 新浪财经
-    try:
-        url = "https://feed.mix.sina.com.cn/api/roll/get"
-        params = {
-            "pageid": 153, "lid": 2512, "k": "", "num": 25, "page": 1,
-            "r": str(time.time()).replace(".", "")[:13],
-        }
-        r = session.get(url, params=params, timeout=15)
-        if r.status_code == 200:
-            items = r.json().get("result", {}).get("data", [])
-            news_list = []
-            for item in items:
-                news_list.append({
-                    "标题": item.get("title", ""),
-                    "摘要": (item.get("intro", "") or item.get("summary", ""))[:200],
-                    "时间": item.get("ctime", ""),
-                    "来源": "新浪财经",
-                })
-            if news_list:
-                print(f"  获取到 {len(news_list)} 条新闻 (新浪)")
-                return news_list
-    except Exception as e:
-        print(f"  新浪新闻源失败: {e}")
-
-    print("  所有新闻源均失败")
-    return []
 
 
 # ═══════════════════════════════════════════════════════
@@ -241,7 +197,7 @@ def fetch_news() -> list[dict]:
 # ═══════════════════════════════════════════════════════
 
 def generate_interpretations(quotes: list[dict], announcements: list[dict],
-                             news: list[dict], ai_cfg: dict) -> dict:
+                             ai_cfg: dict) -> dict:
     """调用AI生成解读，失败时返回空结果。"""
     if not ai_cfg.get("enabled"):
         print("[AI] 未启用，跳过解读")
@@ -266,9 +222,6 @@ def generate_interpretations(quotes: list[dict], announcements: list[dict],
         notice_lines += f"- [{a['股票代码']}] {a['标题'][:60]}\n"
 
     news_lines = ""
-    for n in news[:10]:
-        news_lines += f"- {n['标题'][:60]}\n"
-
     prompt = f"""你是一个A股市场分析助手。请为以下数据生成简短解读（每条15字以内）：
 
 【股票行情】
@@ -277,10 +230,7 @@ def generate_interpretations(quotes: list[dict], announcements: list[dict],
 【公告】
 {notice_lines or '无'}
 
-【新闻】
-{news_lines or '无'}
-
-请以JSON格式返回解读，key分别为stocks(对象，key为股票代码)、announcements(数组，与输入顺序对应)、news(数组，与输入顺序对应)。
+请以JSON格式返回解读，key分别为stocks(对象，key为股票代码)、announcements(数组，与输入顺序对应)。
 只返回JSON，不要其他文字。"""
 
     try:
@@ -313,7 +263,7 @@ def generate_interpretations(quotes: list[dict], announcements: list[dict],
 # HTML 邮件
 # ═══════════════════════════════════════════════════════
 
-def build_html(quotes: list[dict], announcements: list[dict], news: list[dict],
+def build_html(quotes: list[dict], announcements: list[dict],
                interpretations: dict = None) -> str:
     """拼装 HTML 邮件正文。"""
     interp = interpretations or {}
@@ -343,40 +293,65 @@ def build_html(quotes: list[dict], announcements: list[dict], news: list[dict],
     else:
         quote_rows = '<tr><td colspan="11" style="text-align:center;color:#999">今日无行情数据（可能非交易日）</td></tr>'
 
-    # ── 公告列表 ──
+    # ── 公告列表（按发布时间排序，10分钟内整理在一起）──
     if announcements:
         notice_ai = interp.get("announcements", [])
-        notice_items = ""
+        # 预分配AI解读到公告对象
         for i, a in enumerate(announcements):
-            ai_text = notice_ai[i] if i < len(notice_ai) else ""
-            ai_line = f'<div style="color:#888;font-size:11px;font-style:italic;margin-top:1px">AI: {ai_text}</div>' if ai_text else ''
-            notice_items += f"""
+            a["_ai"] = notice_ai[i] if i < len(notice_ai) else ""
+
+        # 解析发布时间并排序
+        def _parse_dt(a):
+            raw = a.get("发布时间", "")
+            for fmt in ("%Y-%m-%d %H:%M:%S:%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    return datetime.strptime(raw, fmt)
+                except ValueError:
+                    continue
+            return datetime.min
+
+        parsed = [(_parse_dt(a), a) for a in announcements]
+        parsed.sort(key=lambda x: x[0], reverse=True)
+
+        # 按10分钟窗口分组
+        groups = []
+        cur = []
+        for dt, a in parsed:
+            if not cur:
+                cur.append((dt, a))
+            else:
+                gap = abs((cur[-1][0] - dt).total_seconds()) if dt != datetime.min else 99999
+                if gap <= 600:
+                    cur.append((dt, a))
+                else:
+                    groups.append(cur)
+                    cur = [(dt, a)]
+        if cur:
+            groups.append(cur)
+
+        # 渲染分组
+        notice_items = ""
+        for group in groups:
+            group_dt = group[0][0]
+            if group_dt != datetime.min:
+                time_str = group_dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                time_str = group[0][1].get("日期", "")
+            notice_items += f'<li style="color:#888;font-size:11px;font-weight:bold;padding-top:10px;border-bottom:none">⏰ {time_str}</li>'
+            for dt, a in group:
+                ai_text = a.get("_ai", "")
+                ai_line = f'<div style="color:#888;font-size:11px;font-style:italic;margin-top:1px">AI: {ai_text}</div>' if ai_text else ''
+                detail_url = a.get("详情链接", "")
+                title_html = f'<a href="{detail_url}" target="_blank" style="color:#2c3e50;text-decoration:none" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">{a["标题"]}</a>' if detail_url else a["标题"]
+                notice_items += f"""
             <li>
               <span class="tag">{a['股票代码']}</span>
-              {a['标题']}
-              <span style="color:#999;font-size:12px">({a['日期']})</span>
+              {title_html}
               {ai_line}
             </li>"""
     else:
         notice_items = '<li style="color:#999">近期无新公告</li>'
 
-    # ── 新闻列表 ──
-    if news:
-        news_ai = interp.get("news", [])
-        news_items = ""
-        for i, n in enumerate(news[:25]):
-            summary = n.get('摘要', '')[:150]
-            ai_text = news_ai[i] if i < len(news_ai) else ""
-            ai_line = f'<div style="color:#888;font-size:11px;font-style:italic;margin-top:1px">AI: {ai_text}</div>' if ai_text else ''
-            news_items += f"""
-            <li>
-              <b>{n['标题']}</b>
-              <div style="color:#666;font-size:13px;margin-top:2px">{summary}</div>
-              {ai_line}
-              <span style="color:#999;font-size:11px">{n.get('时间','')} | {n.get('来源','')}</span>
-            </li>"""
-    else:
-        news_items = '<li style="color:#999">无最新新闻</li>'
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -420,11 +395,6 @@ def build_html(quotes: list[dict], announcements: list[dict], news: list[dict],
   <div class="card">
     <div class="card-title">最新公告</div>
     <ul>{notice_items}</ul>
-  </div>
-
-  <div class="card">
-    <div class="card-title">财经新闻</div>
-    <ul>{news_items}</ul>
   </div>
 
   <div class="refresh-bar">
@@ -570,12 +540,11 @@ def run_collect(config: dict) -> str:
 
     quotes = fetch_realtime_quotes(stocks)
     announcements = fetch_announcements(codes)
-    news = fetch_news()
 
     ai_cfg = config.get("ai", {})
-    interpretations = generate_interpretations(quotes, announcements, news, ai_cfg)
+    interpretations = generate_interpretations(quotes, announcements, ai_cfg)
 
-    return build_html(quotes, announcements, news, interpretations)
+    return build_html(quotes, announcements, interpretations)
 
 
 def run():
