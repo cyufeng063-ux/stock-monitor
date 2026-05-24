@@ -7,6 +7,7 @@ import json
 import os
 import re
 import smtplib
+import subprocess
 import sys
 import threading
 import time
@@ -19,6 +20,20 @@ import requests
 
 BASE = Path(__file__).parent
 CONFIG_PATH = BASE / "config.json"
+
+
+def _get_version() -> str:
+    """从 git 提交数获取版本号，失败则用日期。"""
+    try:
+        r = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, cwd=str(BASE), timeout=5,
+        )
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return datetime.now().strftime("%y%m%d")
 CACHE_DIR = BASE / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
@@ -497,7 +512,8 @@ def build_html(quotes: list[dict], announcements: list[dict],
         notice_items = '<li style="color:#999">近期无新公告</li>'
 
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    version = _get_version()
 
     # 构建前端腾讯行情映射
     tc_entries = []
@@ -554,9 +570,10 @@ def build_html(quotes: list[dict], announcements: list[dict],
   </div>
 
   <div class="disclaimer">
-    本邮件为自动化数据采集结果，仅收集公开市场信息<br>
+    本页面为自动化数据采集结果，仅收集公开市场信息<br>
     不构成任何投资建议，请独立判断与决策<br>
-    数据可能存在延迟，以交易所官方数据为准
+    数据可能存在延迟，以交易所官方数据为准<br>
+    <span style="color:#bbb">v{version} | 部署时间: {now}</span>
   </div>
 </div>
 <script>
