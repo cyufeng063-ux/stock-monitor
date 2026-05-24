@@ -2,9 +2,7 @@
   "_comment": "A股信息收集器配置 | stocks: 填入追踪的A股代码 | email: 配置后自动发邮件 | schedule: 配合Windows任务计划使用",
 
   "stocks": [
-    {"code": "600519", "name": "贵州茅台"},
-    {"code": "000858", "name": "五粮液"},
-    {"code": "300750", "name": "宁德时代"},
+    {"code": "002940", "name": "昂立康"},
     {"code": "603778", "name": "国晟科技"}
   ],
 
