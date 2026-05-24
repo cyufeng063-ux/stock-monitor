@@ -34,6 +34,21 @@ def _get_version() -> str:
     except Exception:
         pass
     return datetime.now().strftime("%y%m%d")
+
+
+def _get_push_time() -> str:
+    """从 git 获取最近一次提交时间作为推送时间，失败则用当前时间。"""
+    try:
+        r = subprocess.run(
+            ["git", "log", "-1", "--format=%ci"],
+            capture_output=True, text=True, cwd=str(BASE), timeout=5,
+        )
+        if r.returncode == 0:
+            # git format: "2026-05-25 00:29:30 +0800" -> "2026-05-25 00:29:30"
+            return r.stdout.strip()[:19]
+    except Exception:
+        pass
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 CACHE_DIR = BASE / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
@@ -514,6 +529,7 @@ def build_html(quotes: list[dict], announcements: list[dict],
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     version = _get_version()
+    push_time = _get_push_time()
 
     # 构建前端腾讯行情映射
     tc_entries = []
@@ -573,7 +589,7 @@ def build_html(quotes: list[dict], announcements: list[dict],
     本页面为自动化数据采集结果，仅收集公开市场信息<br>
     不构成任何投资建议，请独立判断与决策<br>
     数据可能存在延迟，以交易所官方数据为准<br>
-    <span style="color:#bbb">v{version} | 部署时间: {now}</span>
+    <span style="color:#bbb">v{version} | 部署时间: {push_time}</span>
   </div>
 </div>
 <script>
