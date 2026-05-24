@@ -8,6 +8,7 @@ import os
 import re
 import smtplib
 import sys
+import threading
 import time
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -489,18 +490,42 @@ def send_email(html: str, config: dict):
 
 WEB_HTML = CACHE_DIR / "index.html"
 
+# 服务模式下缓存最新HTML
+_cached_html = ""
+_cache_lock = threading.Lock()
 
-def start_server(port: int = 8080):
-    """启动本地 HTTP 服务器, 打开浏览器即可看报告。"""
+
+def _inject_auto_refresh(html: str, interval: int = 30) -> str:
+    return html.replace("</head>",
+        f'<meta http-equiv="refresh" content="{interval}">\n</head>')
+
+
+def _refresh_loop(config: dict, interval: int):
+    """后台线程：每interval秒拉取数据，更新缓存。"""
+    global _cached_html
+    while True:
+        try:
+            print(f"\n{'='*50}")
+            print(f"  [后台刷新] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            html = run_collect(config)
+            html = _inject_auto_refresh(html, interval)
+            with _cache_lock:
+                _cached_html = html
+            print(f"  [后台刷新] 完成，下次刷新: {interval}秒后")
+        except Exception as e:
+            print(f"  [后台刷新] 失败: {e}")
+        time.sleep(interval)
+
+
+def start_server(port: int = 8080, refresh_interval: int = 30):
+    """启动本地 HTTP 服务器，后台每refresh_interval秒自动拉取最新数据。"""
     from http.server import HTTPServer, BaseHTTPRequestHandler
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/" or self.path == "/index.html":
-                if WEB_HTML.exists():
-                    html = WEB_HTML.read_text(encoding="utf-8")
-                else:
-                    html = "<h2>请先运行一次数据采集</h2>"
+                with _cache_lock:
+                    html = _cached_html if _cached_html else "<h2>正在采集数据，请稍后刷新...</h2>"
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
@@ -514,7 +539,13 @@ def start_server(port: int = 8080):
 
     server = HTTPServer(("0.0.0.0", port), Handler)
     print(f"  网页地址: http://localhost:{port}")
+    print(f"  数据刷新间隔: {refresh_interval}秒")
     print(f"  按 Ctrl+C 停止服务")
+
+    # 后台线程定时刷新数据
+    t = threading.Thread(target=_refresh_loop, args=(config, refresh_interval), daemon=True)
+    t.start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -578,14 +609,18 @@ def run():
     # 网页服务
     if args.serve is not None:
         port = args.serve
-        # 注入自动刷新
-        refresh_html = html.replace("</head>",
-            '<meta http-equiv="refresh" content="30">\n</head>')
-        WEB_HTML.write_text(refresh_html, encoding="utf-8")
-        print(f"  每30秒自动刷新")
-
         print("=" * 50)
-        start_server(port)
+        # 先立即采集一次数据作为初始缓存
+        print(f"  [初始采集] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        try:
+            html = run_collect(config)
+            html = _inject_auto_refresh(html, 30)
+            with _cache_lock:
+                _cached_html = html
+            print("  初始数据采集完成")
+        except Exception as e:
+            print(f"  初始采集失败: {e}")
+        start_server(port, 30)
     else:
         # 非serve模式也保存一份到 web 目录
         WEB_HTML.write_text(html, encoding="utf-8")
