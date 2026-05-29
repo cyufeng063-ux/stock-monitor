@@ -1110,7 +1110,7 @@ def build_screening_page(stocks: list[dict]) -> str:
 def _build_screening_card() -> str:
     """主页上的选股链接卡片（点击跳转）。"""
     return """<div class="card">
-    <div class="card-title" style="text-align:center;cursor:pointer" onclick="location.href='screening.html'">
+    <div class="card-title" style="text-align:center;cursor:pointer" onclick="location.href='screening.html?_='+Date.now()">
       <span style="color:#2c3e50;text-decoration:none;font-size:16px;font-weight:bold;">
         同花顺问财选股 →
       </span>
