@@ -590,7 +590,7 @@ def _save_breadth_cache(cache: dict[str, dict]) -> None:
     from datetime import date, timedelta
     cutoff = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
     trimmed = {k: v for k, v in cache.items() if k >= cutoff}
-    BREADTH_CACHE.write_text(json.dumps(trimmed, ensure_ascii=False), encoding="utf-8")
+    BREADTH_CACHE.write_text(json.dumps(trimmed, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _fetch_today_breadth() -> dict[str, int] | None:
@@ -618,6 +618,7 @@ def _fetch_today_breadth() -> dict[str, int] | None:
 def _backfill_breadth() -> int:
     """补全涨跌家数缓存，返回补全条数。
     优先用push2his(东方财富历史K线)，本地被封则在Actions环境生效。"""
+    from datetime import date, timedelta
     cache = _load_breadth_cache()
     today = date.today()
     year_start = f"{today.year}-01-01"
@@ -694,7 +695,6 @@ def _backfill_breadth() -> int:
 
     print(f"  涨跌家数补全: 无法获取, 缺失{len(missing_dates)}天的数据将随每日运行逐步补全")
     return 0
-        return 0
 
 
 def _get_breadth_for_date(date_str: str) -> dict | None:
