@@ -433,11 +433,115 @@ def generate_interpretations(quotes: list[dict], announcements: list[dict],
 
 
 # ═══════════════════════════════════════════════════════
+# 股指期货期权交割日
+# ═══════════════════════════════════════════════════════
+
+def _get_expiration_dates(year: int) -> list[dict]:
+    """计算当年每月第三个周五（A股股指期货期权交割日）。"""
+    from datetime import date, timedelta
+
+    dates = []
+    for month in range(1, 13):
+        first = date(year, month, 1)
+        # 计算第一个周五
+        days_until_friday = (4 - first.weekday()) % 7
+        third_friday = first + timedelta(days=days_until_friday + 14)
+        is_past = third_friday <= date.today()
+        weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+        dates.append({
+            "month": month,
+            "date": third_friday.strftime("%Y-%m-%d"),
+            "weekday": weekdays[third_friday.weekday()],
+            "is_past": is_past,
+            "is_today": third_friday == date.today(),
+        })
+    return dates
+
+
+def _fetch_sse_daily_kline() -> dict[str, dict]:
+    """获取上证指数日K线数据，返回 {日期: {open, close, high, low}}。"""
+    try:
+        url = (
+            "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+            "CN_MarketData.getKLineData?symbol=sh000001&scale=240&ma=no&datalen=300"
+        )
+        r = session.get(url, timeout=15)
+        if r.status_code != 200:
+            print("  上证日K线数据获取失败")
+            return {}
+        data = r.json()
+        kline_map = {}
+        for item in data:
+            day = item.get("day", "")
+            try:
+                kline_map[day] = {
+                    "open": float(item["open"]),
+                    "close": float(item["close"]),
+                    "high": float(item["high"]),
+                    "low": float(item["low"]),
+                }
+            except (ValueError, KeyError):
+                continue
+        print(f"  上证日K线: {len(kline_map)} 天")
+        return kline_map
+    except Exception as e:
+        print(f"  上证日K线获取失败: {e}")
+        return {}
+
+
+def _build_expiration_table(dates: list[dict], kline: dict[str, dict]) -> str:
+    """生成交割日表格 HTML。"""
+    rows = ""
+    for d in dates:
+        date_str = d["date"]
+        row_style = 'style="background:#fffbe6"' if d["is_today"] else ""
+
+        # 在日k线中查找该交割日或最近交易日的数据
+        sse_info = ""
+        if date_str in kline:
+            k = kline[date_str]
+            chg = k["close"] - k["open"]
+            pct = (chg / k["open"] * 100)
+            color = "#e74c3c" if pct > 0 else "#27ae60" if pct < 0 else "#666"
+            sse_info = (
+                f'<span style="font-weight:bold">{k["close"]:.2f}</span> '
+                f'<span style="color:{color};font-size:11px">'
+                f'{( "+" if pct > 0 else "" )}{pct:.2f}%</span>'
+            )
+        elif d["is_past"]:
+            # 交割日不是交易日，找最近一个交易日
+            sse_info = '<span style="color:#888;font-size:11px">非交易日</span>'
+        else:
+            sse_info = '<span style="color:#aaa">待发生</span>'
+
+        highlight = "交割日" if d["is_today"] else ("已过" if d["is_past"] else "未到")
+
+        rows += f"""            <tr {row_style}>
+              <td>{d["month"]}月</td>
+              <td>{date_str}</td>
+              <td>{d["weekday"]}</td>
+              <td>{sse_info}</td>
+              <td style="font-size:11px;color:#888">{highlight}</td>
+            </tr>\n"""
+
+    return f"""<div class="card">
+    <div class="card-title">{dates[0]["date"][:4]}年 股指期货期权交割日
+      <span style="font-weight:normal;font-size:11px;color:#999;margin-left:8px">(IF/IH/IC/IM)</span>
+    </div>
+    <div style="overflow-x:auto">
+    <table>
+      <tr><th>月份</th><th>交割日</th><th>星期</th><th>上证收盘/涨跌</th><th>状态</th></tr>
+{rows}    </table>
+    </div>
+  </div>"""
+
+# ═══════════════════════════════════════════════════════
 # HTML 邮件
 # ═══════════════════════════════════════════════════════
 
 def build_html(quotes: list[dict], announcements: list[dict],
-               interpretations: dict = None) -> str:
+               interpretations: dict = None,
+               expiration_html: str = "") -> str:
     """拼装 HTML 邮件正文。"""
     interp = interpretations or {}
 
@@ -574,6 +678,8 @@ def build_html(quotes: list[dict], announcements: list[dict],
     </table>
     </div>
   </div>
+
+  {expiration_html}
 
   <div class="card">
     <div class="card-title">最新公告</div>
@@ -777,10 +883,21 @@ def run_collect(config: dict) -> str:
     quotes = fetch_realtime_quotes(stocks)
     announcements = fetch_announcements(codes)
 
+    # 股指期货期权交割日
+    expiration_html = ""
+    try:
+        year = datetime.now().year
+        exp_dates = _get_expiration_dates(year)
+        kline = _fetch_sse_daily_kline()
+        expiration_html = _build_expiration_table(exp_dates, kline)
+        print(f"  交割日表: {len(exp_dates)} 个月")
+    except Exception as e:
+        print(f"  交割日表生成失败: {e}")
+
     ai_cfg = config.get("ai", {})
     interpretations = generate_interpretations(quotes, announcements, ai_cfg)
 
-    return build_html(quotes, announcements, interpretations)
+    return build_html(quotes, announcements, interpretations, expiration_html)
 
 
 def run():
