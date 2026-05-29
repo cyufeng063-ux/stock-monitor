@@ -495,6 +495,58 @@ def _get_a50_expiration_dates(year: int) -> list[dict]:
     return dates
 
 
+def _send_expiration_reminder(domestic: list[dict], a50: list[dict],
+                              notify_cfg: dict) -> None:
+    """交割日前发送Server酱推送提醒。"""
+    if not notify_cfg.get("enabled"):
+        return
+    sendkey = notify_cfg.get("sendkey", "")
+    if not sendkey or "你的" in sendkey:
+        print("  [提醒] SendKey未配置，跳过推送")
+        return
+
+    days_before = notify_cfg.get("days_before", [0, 1])
+    if not isinstance(days_before, list):
+        days_before = [0, 1]
+
+    from datetime import date, timedelta
+    today = date.today()
+    reminders = []
+
+    for d in domestic:
+        dt = date.fromisoformat(d["date"])
+        for db in days_before:
+            if today + timedelta(days=db) == dt:
+                label = "今天" if db == 0 else f"{db}天后"
+                reminders.append(f"{label} ({d['date']} {d['weekday']}) 国内IF/IH/IC/IM交割")
+
+    for a in a50:
+        dt = date.fromisoformat(a["date"])
+        for db in days_before:
+            if today + timedelta(days=db) == dt:
+                label = "今天" if db == 0 else f"{db}天后"
+                reminders.append(f"{label} ({a['date']} {a['weekday']}) A50(SGX)交割")
+
+    if not reminders:
+        print("  [提醒] 近期无交割日")
+        return
+
+    msg = "\n".join(reminders)
+    print(f"  [提醒] 发送推送: {msg}")
+    try:
+        r = session.post(
+            f"https://sctapi.ftqq.com/{sendkey}.send",
+            data={"title": "股指期货交割日提醒", "desp": msg},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            print("  [提醒] 推送成功")
+        else:
+            print(f"  [提醒] 推送失败: {r.status_code} {r.text[:100]}")
+    except Exception as e:
+        print(f"  [提醒] 推送异常: {e}")
+
+
 def _fetch_sse_daily_kline() -> dict[str, dict]:
     """获取上证指数日K线数据，返回 {日期: {open, close, high, low}}。"""
     try:
@@ -1038,6 +1090,10 @@ def run_collect(config: dict) -> str:
         exp_page = build_expiration_page(exp_dates, a50_dates, kline)
         (BASE / "expiration.html").write_text(exp_page, encoding="utf-8")
         print(f"  交割日表: 国内{len(exp_dates)}月 + A50{len(a50_dates)}月, 页面已保存")
+
+        # 交割日微信提醒
+        notify_cfg = config.get("notify", {})
+        _send_expiration_reminder(exp_dates, a50_dates, notify_cfg)
     except Exception as e:
         print(f"  交割日表生成失败: {e}")
 

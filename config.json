@@ -23,6 +23,13 @@
     "model": "deepseek-chat"
   },
 
+  "notify": {
+    "_comment": "Server酱推送提醒，注册 serverchan.ftqq.com 获取 SendKey",
+    "enabled": false,
+    "sendkey": "你的SendKey",
+    "days_before": [0, 1]
+  },
+
   "schedule": {
     "_comment": "参考时间, 定时需配合系统计划任务",
     "market_open_check": "09:30",
