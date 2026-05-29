@@ -32,6 +32,8 @@ jobs:
 
       - name: 拉取数据并生成报告
         run: python stock_monitor.py -o index.html --no-email
+        env:
+          TZ: Asia/Shanghai
 
       - name: 提交更新
         run: |
