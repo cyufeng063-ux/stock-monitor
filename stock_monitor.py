@@ -525,17 +525,13 @@ def _build_expiration_table(dates: list[dict], kline: dict[str, dict]) -> str:
     return rows
 
 
-def _build_expiration_card(rows: str, year: str, link: bool = True) -> str:
-    """主页上的交割日摘要卡片（仅显示近期，带链接到独立页面）。"""
+def _build_expiration_card(year: str) -> str:
+    """主页上的交割日链接卡片。"""
     return f"""<div class="card">
-    <div class="card-title">{year}年 股指期货期权交割日
-      <span style="font-weight:normal;font-size:11px;color:#999;margin-left:8px">(IF/IH/IC/IM)</span>
-      <a href="expiration.html" style="float:right;font-size:12px;font-weight:normal;color:#2980b9;text-decoration:none">{'查看完整表格 →' if link else ''}</a>
-    </div>
-    <div style="overflow-x:auto">
-    <table>
-      <tr><th>月份</th><th>交割日</th><th>星期</th><th>上证收盘/涨跌</th><th>状态</th></tr>
-{rows}    </table>
+    <div class="card-title" style="text-align:center">
+      <a href="expiration.html" style="color:#2c3e50;text-decoration:none;font-size:16px;font-weight:bold;">
+        {year}年 股指期货期权交割日 (IF/IH/IC/IM) →
+      </a>
     </div>
   </div>"""
 
@@ -636,12 +632,11 @@ def build_html(quotes: list[dict], announcements: list[dict],
     else:
         quote_rows = '<tr><td colspan="11" style="text-align:center;color:#999">今日无行情数据（可能非交易日）</td></tr>'
 
-    # ── 交割日摘要 ──
+    # ── 交割日链接 ──
     expiration_html = ""
-    if expiration_dates and kline is not None:
-        rows = _build_expiration_table(expiration_dates, kline)
+    if expiration_dates:
         year_str = expiration_dates[0]["date"][:4]
-        expiration_html = _build_expiration_card(rows, year_str, link=True)
+        expiration_html = _build_expiration_card(year_str)
 
     # ── 公告列表（按发布时间排序，10分钟内整理在一起）──
     if announcements:
