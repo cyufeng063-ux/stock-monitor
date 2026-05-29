@@ -443,7 +443,6 @@ def _get_expiration_dates(year: int) -> list[dict]:
     dates = []
     for month in range(1, 13):
         first = date(year, month, 1)
-        # 计算第一个周五
         days_until_friday = (4 - first.weekday()) % 7
         third_friday = first + timedelta(days=days_until_friday + 14)
         is_past = third_friday <= date.today()
@@ -454,6 +453,44 @@ def _get_expiration_dates(year: int) -> list[dict]:
             "weekday": weekdays[third_friday.weekday()],
             "is_past": is_past,
             "is_today": third_friday == date.today(),
+        })
+    return dates
+
+
+def _get_a50_expiration_dates(year: int) -> list[dict]:
+    """计算A50(富时中国A50指数期货, SGX)交割日 — 每月最后一个营业日。"""
+    from datetime import date, timedelta
+
+    _SGX_HOLIDAYS_2026 = {
+        date(2026, 1, 1), date(2026, 2, 17), date(2026, 2, 18),
+        date(2026, 4, 3), date(2026, 5, 1), date(2026, 8, 10),
+        date(2026, 12, 25),
+    }
+
+    def _is_biz(d: date) -> bool:
+        return d.weekday() < 5 and d not in _SGX_HOLIDAYS_2026
+
+    def _last_biz(month: int) -> date:
+        # 从下个月第一天往前推
+        if month == 12:
+            d = date(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            d = date(year, month + 1, 1) - timedelta(days=1)
+        while not _is_biz(d):
+            d -= timedelta(days=1)
+        return d
+
+    dates = []
+    weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+    for month in range(1, 13):
+        last = _last_biz(month)
+        is_past = last <= date.today()
+        dates.append({
+            "month": month,
+            "date": last.strftime("%Y-%m-%d"),
+            "weekday": weekdays[last.weekday()],
+            "is_past": is_past,
+            "is_today": last == date.today(),
         })
     return dates
 
@@ -530,13 +567,13 @@ def _build_expiration_card(year: str) -> str:
     return f"""<div class="card">
     <div class="card-title" style="text-align:center;cursor:pointer" onclick="openExpModal()">
       <span style="color:#2c3e50;text-decoration:none;font-size:16px;font-weight:bold;">
-        {year}年 股指期货期权交割日 (IF/IH/IC/IM) →
+        {year}年 股指期货期权交割日 →
       </span>
     </div>
   </div>
 
 <div id="expModal" style="display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.5)" onclick="if(event.target===this)closeExpModal()">
-  <div style="position:relative;margin:30px auto;width:95%;max-width:750px;height:90vh;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.3);overflow:hidden">
+  <div style="position:relative;margin:30px auto;width:95%;max-width:800px;height:90vh;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.3);overflow:hidden">
     <div style="background:#1a1a2e;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-weight:bold">{year}年 股指期货期权交割日</span>
       <span onclick="closeExpModal()" style="cursor:pointer;font-size:22px;line-height:1">&times;</span>
@@ -550,15 +587,15 @@ function closeExpModal(){{document.getElementById('expModal').style.display='non
 </script>"""
 
 
-def build_expiration_page(dates: list[dict], kline: dict[str, dict]) -> str:
-    """生成独立的交割日页面。"""
+def build_expiration_page(dates: list[dict], a50_dates: list[dict],
+                         kline: dict[str, dict]) -> str:
+    """生成独立的交割日页面（包含国内股指 + A50）。"""
     year = dates[0]["date"][:4]
-    rows = _build_expiration_table(dates, kline)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    dom_rows = _build_expiration_table(dates, kline)
+    a50_rows = _build_expiration_table(a50_dates, kline)
 
-    # 取当前上证点位
-    sse_current = ""
     today_str = datetime.now().strftime("%Y-%m-%d")
+    sse_current = ""
     if today_str in kline:
         k = kline[today_str]
         sse_current = f"上证指数 {k['close']:.2f}"
@@ -568,7 +605,7 @@ def build_expiration_page(dates: list[dict], kline: dict[str, dict]) -> str:
 <title>{year}年股指期货期权交割日</title>
 <style>
   body {{ font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; background: #f5f6fa; padding: 20px; }}
-  .container {{ max-width: 700px; margin: 0 auto; }}
+  .container {{ max-width: 740px; margin: 0 auto; }}
   .header {{ background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 25px; border-radius: 12px 12px 0 0; text-align: center; }}
   .header h1 {{ margin: 0; font-size: 22px; }}
   .header p {{ margin: 8px 0 0; opacity: 0.7; font-size: 13px; }}
@@ -585,28 +622,45 @@ def build_expiration_page(dates: list[dict], kline: dict[str, dict]) -> str:
 </style></head><body>
 <div class="container">
   <div class="header">
-    <h1>{year}年股指期货期权交割日</h1>
-    <p>A股股指期货(IF/IH/IC/IM)及期权 — 每月第三个周五 &nbsp;|&nbsp; {sse_current}</p>
+    <h1>{year}年 股指期货期权交割日</h1>
+    <p>{sse_current} &nbsp;|&nbsp; 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
   </div>
+
   <div class="card">
-    <div class="card-title">交割日一览</div>
+    <div class="card-title">国内股指期货期权 (IF/IH/IC/IM)
+      <span style="font-weight:normal;font-size:11px;color:#999;margin-left:8px">每月第三个周五</span>
+    </div>
     <div style="overflow-x:auto">
     <table>
       <tr><th>月份</th><th>交割日</th><th>星期</th><th>上证收盘/涨跌</th><th>状态</th></tr>
-{rows}    </table>
+{dom_rows}    </table>
     </div>
   </div>
+
+  <div class="card">
+    <div class="card-title">富时中国A50 (SGX)
+      <span style="font-weight:normal;font-size:11px;color:#999;margin-left:8px">每月最后营业日</span>
+    </div>
+    <div style="overflow-x:auto">
+    <table>
+      <tr><th>月份</th><th>交割日</th><th>星期</th><th>上证收盘/涨跌</th><th>状态</th></tr>
+{a50_rows}    </table>
+    </div>
+  </div>
+
   <div class="note">
     <strong>说明</strong><br>
-    1. 股指期货期权交割日为每月第三个周五，遇节假日顺延（本表为理论日期）<br>
-    2. 上证数据为交割日当天收盘价及相对开盘涨跌幅<br>
-    3. 交割日前后市场可能出现较大波动，请注意风险
+    1. 国内股指期货期权(IF/IH/IC/IM)交割日为每月第三个周五，遇节假日顺延<br>
+    2. A50(富时中国A50指数期货)在新加坡SGX交易，交割日为每月最后营业日<br>
+    3. 上证数据为交割日当天收盘价及相对开盘涨跌幅<br>
+    4. 交割日前后市场可能出现较大波动，请注意风险
   </div>
   <div class="back">
     <a href="index.html">← 返回主页</a>
   </div>
 </div>
 </body></html>"""
+    return html
     return html
 
 # ═══════════════════════════════════════════════════════
@@ -966,15 +1020,16 @@ def run_collect(config: dict) -> str:
 
     # 股指期货期权交割日
     exp_dates = []
+    a50_dates = []
     kline = {}
     try:
         year = datetime.now().year
         exp_dates = _get_expiration_dates(year)
+        a50_dates = _get_a50_expiration_dates(year)
         kline = _fetch_sse_daily_kline()
-        # 生成独立交割日页面
-        exp_page = build_expiration_page(exp_dates, kline)
+        exp_page = build_expiration_page(exp_dates, a50_dates, kline)
         (BASE / "expiration.html").write_text(exp_page, encoding="utf-8")
-        print(f"  交割日表: {len(exp_dates)} 个月, 独立页面已保存")
+        print(f"  交割日表: 国内{len(exp_dates)}月 + A50{len(a50_dates)}月, 页面已保存")
     except Exception as e:
         print(f"  交割日表生成失败: {e}")
 
