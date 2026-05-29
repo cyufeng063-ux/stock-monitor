@@ -526,14 +526,28 @@ def _build_expiration_table(dates: list[dict], kline: dict[str, dict]) -> str:
 
 
 def _build_expiration_card(year: str) -> str:
-    """主页上的交割日链接卡片。"""
+    """主页上的交割日链接卡片（点击弹窗显示）。"""
     return f"""<div class="card">
-    <div class="card-title" style="text-align:center">
-      <a href="expiration.html" style="color:#2c3e50;text-decoration:none;font-size:16px;font-weight:bold;">
+    <div class="card-title" style="text-align:center;cursor:pointer" onclick="openExpModal()">
+      <span style="color:#2c3e50;text-decoration:none;font-size:16px;font-weight:bold;">
         {year}年 股指期货期权交割日 (IF/IH/IC/IM) →
-      </a>
+      </span>
     </div>
-  </div>"""
+  </div>
+
+<div id="expModal" style="display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.5)" onclick="if(event.target===this)closeExpModal()">
+  <div style="position:relative;margin:30px auto;width:95%;max-width:750px;height:90vh;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.3);overflow:hidden">
+    <div style="background:#1a1a2e;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:bold">{year}年 股指期货期权交割日</span>
+      <span onclick="closeExpModal()" style="cursor:pointer;font-size:22px;line-height:1">&times;</span>
+    </div>
+    <iframe src="expiration.html" style="width:100%;height:calc(100% - 44px);border:none"></iframe>
+  </div>
+</div>
+<script>
+function openExpModal(){{document.getElementById('expModal').style.display='block'}}
+function closeExpModal(){{document.getElementById('expModal').style.display='none'}}
+</script>"""
 
 
 def build_expiration_page(dates: list[dict], kline: dict[str, dict]) -> str:
