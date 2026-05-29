@@ -897,6 +897,230 @@ def build_expiration_page(dates: list[dict], a50_dates: list[dict],
     return html
     return html
 
+
+# ═══════════════════════════════════════════════════════
+# 同花顺问财选股
+# ═══════════════════════════════════════════════════════
+
+def _get_hexin_v_token() -> str | None:
+    """生成同花顺问财 hexin-v token。"""
+    try:
+        import pywencai
+        js_path = os.path.join(os.path.dirname(pywencai.__file__), 'hexin-v.bundle.js')
+        r = subprocess.run(['node', js_path], capture_output=True, text=True, timeout=15)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except Exception as e:
+        print(f"  hexin-v token生成失败: {e}")
+    return None
+
+
+def _fetch_screening_stocks() -> list[dict] | None:
+    """从同花顺问财获取选股结果，返回股票数据列表。"""
+    token = _get_hexin_v_token()
+    if not token:
+        print("  选股: 无法获取token")
+        return None
+
+    query = ("MACD金叉或KDJ金叉；放量上涨；换手率大于1；"
+             "散户指数小于10；市值大于50亿；站上5日线或站上10日线")
+
+    headers = {
+        'hexin-v': token,
+        'User-Agent': session.headers['User-Agent'],
+        'Content-Type': 'application/json',
+    }
+
+    data = {
+        'add_info': '{"urp":{"scene":1,"company":1,"business":1},"contentType":"json","searchInfo":true}',
+        'perpage': 100,
+        'page': 1,
+        'source': 'Ths_iwencai_Xuangu',
+        'log_info': '{"input_type":"click"}',
+        'version': '2.0',
+        'secondary_intent': 'stock',
+        'question': query,
+    }
+
+    try:
+        r = session.post(
+            'http://www.iwencai.com/customized/chart/get-robot-data',
+            json=data, headers=headers, timeout=30
+        )
+        if r.status_code != 200:
+            print(f"  选股API返回: {r.status_code}")
+            return None
+
+        result = r.json()
+        content = result.get('data', {}).get('answer', [{}])[0].get('txt', [{}])[0].get('content', '')
+        if not content:
+            print("  选股: 响应无内容")
+            return None
+        if isinstance(content, str):
+            content = json.loads(content)
+
+        components = content.get('components', [])
+        if not components:
+            print("  选股: 无结果组件")
+            return None
+
+        first_comp = components[0]
+        datas = None
+
+        # 路径1: xuangu_tableV1 → 需第二次请求
+        if first_comp.get('show_type') == 'xuangu_tableV1':
+            url = first_comp.get('config', {}).get('other_info', {}).get('footer_info', {}).get('url', '')
+            if url:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(url)
+                url_params = {k: v[0] if len(v) == 1 else v
+                              for k, v in parse_qs(parsed.query).items()}
+                r2 = session.post(
+                    'http://www.iwencai.com/gateway/urp/v7/landing/getDataList',
+                    data={**url_params, 'perpage': 100, 'page': 1},
+                    headers={'hexin-v': token, 'User-Agent': session.headers['User-Agent']},
+                    timeout=30
+                )
+                if r2.status_code == 200:
+                    datas = (r2.json().get('answer', {}).get('components', [{}])[0]
+                             .get('data', {}).get('datas', []))
+        else:
+            # 路径2: 直接从components提取datas
+            for comp in components:
+                d = comp.get('data', {}).get('datas')
+                if isinstance(d, list) and d:
+                    datas = d
+                    break
+            if not datas:
+                for comp in components:
+                    for child_uuid in comp.get('config', {}).get('children', []):
+                        for c2 in components:
+                            if c2.get('uuid') == child_uuid:
+                                d = c2.get('data', {}).get('datas')
+                                if isinstance(d, list) and d:
+                                    datas = d
+                                    break
+
+        if not datas:
+            print("  选股: 无匹配股票")
+            return []
+
+        print(f"  选股结果: {len(datas)} 只")
+        return datas
+
+    except Exception as e:
+        print(f"  选股失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def build_screening_page(stocks: list[dict]) -> str:
+    """生成选股结果页面 screening.html。"""
+    if not stocks:
+        return """<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>选股结果</title>
+<style>
+  body { font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; background: #f5f6fa; padding: 20px; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 25px; border-radius: 12px 12px 0 0; text-align: center; }
+  .header h1 { margin: 0; font-size: 22px; }
+  .header p { margin: 8px 0 0; opacity: 0.7; font-size: 13px; }
+  .card { background: #fff; border-radius: 0 0 12px 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); overflow: hidden; }
+  .empty { text-align: center; padding: 60px 20px; color: #999; font-size: 16px; }
+  .back { text-align: center; padding: 16px; }
+  .back a { color: #2980b9; text-decoration: none; font-size: 14px; }
+</style></head><body>
+<div class="container">
+  <div class="header">
+    <h1>同花顺问财选股</h1>
+    <p>MACD金叉/KDJ金叉 · 放量上涨 · 换手&gt;1% · 散户指数&lt;10 · 市值&gt;50亿 · 站上5/10日线</p>
+  </div>
+  <div class="card"><div class="empty">今日无符合条件的股票</div></div>
+  <div class="back"><a href="index.html">← 返回主页</a></div>
+</div>
+</body></html>"""
+
+    columns = list(stocks[0].keys())
+
+    rows_html = ""
+    for i, s in enumerate(stocks):
+        tds = ""
+        for col in columns:
+            val = s.get(col, '—')
+            if val is None or val == '':
+                val = '—'
+            tds += f'<td>{val}</td>'
+        row_style = 'style="background:#fafbfe"' if i % 2 == 0 else ''
+        rows_html += f'<tr {row_style}>{tds}</tr>\n'
+
+    header_html = ''.join(f'<th>{col}</th>' for col in columns)
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>选股结果</title>
+<style>
+  body {{ font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; background: #f5f6fa; padding: 20px; }}
+  .container {{ max-width: 1400px; margin: 0 auto; }}
+  .header {{ background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 25px; border-radius: 12px 12px 0 0; text-align: center; }}
+  .header h1 {{ margin: 0; font-size: 22px; }}
+  .header p {{ margin: 8px 0 0; opacity: 0.7; font-size: 13px; }}
+  .card {{ background: #fff; border-radius: 0 0 12px 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); overflow: hidden; }}
+  .card-title {{ background: #fafbfc; padding: 14px 20px; font-size: 16px; font-weight: bold; color: #2c3e50; border-bottom: 1px solid #eee; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+  th {{ background: #f8f9fa; padding: 8px 6px; text-align: center; font-weight: 600; color: #555; border-bottom: 2px solid #e9ecef; white-space: nowrap; position: sticky; top: 0; }}
+  td {{ padding: 7px 6px; border-bottom: 1px solid #f0f0f0; text-align: center; white-space: nowrap; }}
+  td:first-child, td:nth-child(2) {{ text-align: left; }}
+  tr:hover {{ background: #f0f4ff !important; }}
+  .back {{ text-align: center; padding: 16px; }}
+  .back a {{ color: #2980b9; text-decoration: none; font-size: 14px; }}
+  .note {{ background: #fff; padding: 14px 20px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); font-size: 12px; color: #888; line-height: 1.8; margin-top: 16px; }}
+  .wrap {{ overflow-x: auto; }}
+</style></head><body>
+<div class="container">
+  <div class="header">
+    <h1>同花顺问财选股</h1>
+    <p>MACD金叉/KDJ金叉 · 放量上涨 · 换手&gt;1% · 散户指数&lt;10 · 市值&gt;50亿 · 站上5/10日线 &nbsp;|&nbsp; 生成时间: {now_str}</p>
+  </div>
+  <div class="card">
+    <div class="card-title">选股结果: {len(stocks)} 只</div>
+    <div class="wrap">
+    <table>
+      <tr>{header_html}</tr>
+{rows_html}    </table>
+    </div>
+  </div>
+  <div class="note">
+    <strong>说明</strong><br>
+    1. 数据来源：同花顺问财 (iwencai.com)<br>
+    2. 选股条件：MACD金叉或KDJ金叉；放量上涨；换手率大于1%；散户指数小于10；市值大于50亿；站上5日线或站上10日线<br>
+    3. 数据仅供参考，不构成投资建议<br>
+    4. 每日定时更新，可在开盘后查看最新结果
+  </div>
+  <div class="back">
+    <a href="index.html">← 返回主页</a>
+  </div>
+</div>
+</body></html>"""
+
+
+def _build_screening_card() -> str:
+    """主页上的选股链接卡片（点击跳转）。"""
+    return """<div class="card">
+    <div class="card-title" style="text-align:center;cursor:pointer" onclick="location.href='screening.html'">
+      <span style="color:#2c3e50;text-decoration:none;font-size:16px;font-weight:bold;">
+        同花顺问财选股 →
+      </span>
+      <div style="color:#888;font-size:11px;font-weight:normal;margin-top:4px">
+        MACD/KDJ金叉 · 放量上涨 · 换手&gt;1% · 散户指数&lt;10 · 市值&gt;50亿 · 站上5/10日线
+      </div>
+    </div>
+  </div>"""
+
+
 # ═══════════════════════════════════════════════════════
 # HTML 邮件
 # ═══════════════════════════════════════════════════════
@@ -939,6 +1163,9 @@ def build_html(quotes: list[dict], announcements: list[dict],
     if expiration_dates:
         year_str = expiration_dates[0]["date"][:4]
         expiration_html = _build_expiration_card(year_str)
+
+    # ── 选股链接 ──
+    screening_html = _build_screening_card()
 
     # ── 公告列表（按发布时间排序，10分钟内整理在一起）──
     if announcements:
@@ -1049,6 +1276,8 @@ def build_html(quotes: list[dict], announcements: list[dict],
   </div>
 
   {expiration_html}
+
+  {screening_html}
 
   <div class="card">
     <div class="card-title">最新公告</div>
@@ -1269,6 +1498,18 @@ def run_collect(config: dict) -> str:
         # 交割日微信提醒
         notify_cfg = config.get("notify", {})
         _send_expiration_reminder(exp_dates, a50_dates, notify_cfg)
+
+        # 同花顺问财选股
+        try:
+            screening = _fetch_screening_stocks()
+            if screening is not None:
+                screening_page = build_screening_page(screening)
+                (BASE / "screening.html").write_text(screening_page, encoding="utf-8")
+                print("  选股页面: screening.html 已保存")
+            else:
+                print("  选股: API调用失败，保留旧数据")
+        except Exception as e:
+            print(f"  选股页面生成失败: {e}")
     except Exception as e:
         print(f"  交割日表生成失败: {e}")
 
