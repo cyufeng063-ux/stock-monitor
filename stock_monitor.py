@@ -572,7 +572,7 @@ def _send_expiration_reminder(domestic: list[dict], a50: list[dict],
         print(f"  [提醒] 推送异常: {e}")
 
 
-BREADTH_CACHE = CACHE_DIR / "breadth.json"
+BREADTH_CACHE = BASE / "breadth.json"
 
 
 def _load_breadth_cache() -> dict[str, dict]:
