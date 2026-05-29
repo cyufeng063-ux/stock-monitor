@@ -517,26 +517,40 @@ def _send_expiration_reminder(domestic: list[dict], a50: list[dict],
         dt = date.fromisoformat(d["date"])
         for db in days_before:
             if today + timedelta(days=db) == dt:
-                label = "今天" if db == 0 else f"{db}天后"
-                reminders.append(f"{label} ({d['date']} {d['weekday']}) 国内IF/IH/IC/IM交割")
+                label = "今天" if db == 0 else f"{db}天后（{d['date']}）"
+                reminders.append(
+                    f"{label}\n品种：国内股指期货期权 IF/IH/IC/IM\n"
+                    f"交割日：{d['date']} 周{d['weekday']} 15:00"
+                )
 
     for a in a50:
         dt = date.fromisoformat(a["date"])
         for db in days_before:
             if today + timedelta(days=db) == dt:
-                label = "今天" if db == 0 else f"{db}天后"
-                reminders.append(f"{label} ({a['date']} {a['weekday']}) A50(SGX)交割")
+                label = "今天" if db == 0 else f"{db}天后（{a['date']}）"
+                reminders.append(
+                    f"{label}\n品种：富时中国A50 (SGX)\n"
+                    f"交割日：{a['date']} 周{a['weekday']}"
+                )
 
     if not reminders:
         print("  [提醒] 近期无交割日")
         return
 
-    msg = "\n".join(reminders)
-    print(f"  [提醒] 发送推送: {msg}")
+    msg = "\n---\n".join(reminders)
+    title = "股指期货交割日提醒"
+    if len(reminders) == 1:
+        r0 = reminders[0]
+        if "今天" in r0:
+            title = "今日交割日提醒"
+        else:
+            title = "临近交割日提醒"
+
+    print(f"  [提醒] 发送推送: {len(reminders)} 条")
     try:
         r = session.post(
             f"https://sctapi.ftqq.com/{sendkey}.send",
-            data={"title": "股指期货交割日提醒", "desp": msg},
+            data={"title": title, "desp": msg},
             timeout=10,
         )
         if r.status_code == 200:
