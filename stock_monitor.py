@@ -539,6 +539,13 @@ def _send_expiration_reminder(domestic: list[dict], a50: list[dict],
         print("  [提醒] 近期无交割日")
         return
 
+    # 只在9:30和11:30附近各推一次，避免重复轰炸
+    h, m = datetime.now().hour, datetime.now().minute
+    allowed = [(9, 30), (11, 30)]
+    if not any(abs(h * 60 + m - (ah * 60 + am)) <= 5 for ah, am in allowed):
+        print(f"  [提醒] 当前{h:02d}:{m:02d}不在推送时段(9:30/11:30±5分钟)，跳过")
+        return
+
     msg = "\n---\n".join(reminders)
     msg += "\n\n交割日前后波动往往加剧，务必小心出货，控制仓位。"
 
