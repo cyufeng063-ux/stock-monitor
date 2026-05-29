@@ -572,6 +572,64 @@ def _send_expiration_reminder(domestic: list[dict], a50: list[dict],
         print(f"  [提醒] 推送异常: {e}")
 
 
+BREADTH_CACHE = CACHE_DIR / "breadth.json"
+
+
+def _load_breadth_cache() -> dict[str, dict]:
+    """加载涨跌家数缓存 {日期: {up, down, flat}}。"""
+    if BREADTH_CACHE.exists():
+        try:
+            return json.loads(BREADTH_CACHE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_breadth_cache(cache: dict[str, dict]) -> None:
+    """保存涨跌家数缓存，只保留最近一年。"""
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+    trimmed = {k: v for k, v in cache.items() if k >= cutoff}
+    BREADTH_CACHE.write_text(json.dumps(trimmed, ensure_ascii=False), encoding="utf-8")
+
+
+def _fetch_today_breadth() -> dict[str, int] | None:
+    """从Sina获取当天涨跌家数，返回 {up, down, flat} 或 None。"""
+    try:
+        url = (
+            "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+            "Market_Center.getHQNodeDataSimple"
+        )
+        params = {"page": 1, "num": 5000, "sort": "symbol", "asc": 1, "node": "hs_a"}
+        r = session.get(url, params=params, timeout=30)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        up = sum(1 for s in data if float(s.get("changepercent", 0)) > 0)
+        down = sum(1 for s in data if float(s.get("changepercent", 0)) < 0)
+        flat = sum(1 for s in data if float(s.get("changepercent", 0)) == 0)
+        print(f"  涨跌家数: 涨{up} 跌{down} 平{flat}")
+        return {"up": up, "down": down, "flat": flat}
+    except Exception as e:
+        print(f"  涨跌家数获取失败: {e}")
+        return None
+
+
+def _get_breadth_for_date(date_str: str) -> dict | None:
+    """获取指定日期的涨跌家数（从缓存），当天则尝试实时拉取。"""
+    cache = _load_breadth_cache()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    if date_str == today_str:
+        data = _fetch_today_breadth()
+        if data:
+            cache[today_str] = data
+            _save_breadth_cache(cache)
+            return data
+
+    return cache.get(date_str)
+
+
 def _fetch_sse_daily_kline() -> dict[str, dict]:
     """获取上证指数日K线数据，返回 {日期: {open, close, high, low}}。"""
     try:
@@ -614,11 +672,20 @@ def _build_combined_expiration_table(domestic: list[dict], a50: list[dict],
             chg = k["close"] - k["open"]
             pct = (chg / k["open"] * 100)
             color = "#e74c3c" if pct > 0 else "#27ae60" if pct < 0 else "#666"
-            return (
+            sse = (
                 f'{k["close"]:.2f} '
                 f'<span style="color:{color};font-size:11px">'
                 f'{( "+" if pct > 0 else "" )}{pct:.2f}%</span>'
             )
+            # 涨跌家数
+            bd = _get_breadth_for_date(date_str)
+            if bd:
+                sse += (
+                    f'<br><span style="font-size:10px;color:#888">'
+                    f'涨<span style="color:#e74c3c">{bd["up"]}</span> '
+                    f'跌<span style="color:#27ae60">{bd["down"]}</span></span>'
+                )
+            return sse
         if is_past:
             return '<span style="color:#888;font-size:11px">休市</span>'
         return '<span style="color:#aaa;font-size:11px">—</span>'

@@ -33,7 +33,7 @@ jobs:
         run: |
           git config user.name "stock-bot"
           git config user.email "bot@stock.local"
-          git add index.html expiration.html
+          git add index.html expiration.html cache/breadth.json
           git diff --staged --quiet || git commit -m "更新报告 $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M')"
           git pull --rebase
           git push

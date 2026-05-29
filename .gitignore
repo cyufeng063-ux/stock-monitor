@@ -1,4 +1,5 @@
 cache/
+!cache/breadth.json
 __pycache__/
 *.pyc
 .env
