@@ -10,8 +10,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   update:
@@ -39,26 +37,3 @@ jobs:
           git diff --staged --quiet || git commit -m "更新报告 $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M')"
           git pull --rebase
           git push
-
-  deploy:
-    needs: update
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: 配置 Pages
-        uses: actions/configure-pages@v4
-
-      - name: 上传 Pages 产物
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: '.'
-
-      - name: 部署到 GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
