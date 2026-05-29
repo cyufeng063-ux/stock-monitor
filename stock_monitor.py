@@ -615,6 +615,69 @@ def _fetch_today_breadth() -> dict[str, int] | None:
         return None
 
 
+def _backfill_breadth() -> int:
+    """从东方财富历史K线补全涨跌家数缓存，返回补全条数。
+    注意：本地可能因反爬限制失败，Actions环境正常。"""
+    from datetime import date, timedelta
+    cache = _load_breadth_cache()
+    today = date.today()
+    year_start = f"{today.year}-01-01"
+
+    # 找出今年缺失的交易日范围
+    missing_dates = set()
+    for d in _get_expiration_dates(today.year):
+        if d["is_past"] or d["is_today"]:
+            missing_dates.add(d["date"])
+    for d in _get_a50_expiration_dates(today.year):
+        if d["is_past"] or d["is_today"]:
+            missing_dates.add(d["date"])
+
+    # 去掉缓存中已有的
+    missing_dates -= set(cache.keys())
+    if not missing_dates:
+        return 0
+
+    try:
+        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        params = {
+            "secid": "1.000001", "klt": "101", "fqt": "0",
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f92,f93,f94",
+            "lmt": "300", "beg": year_start.replace("-", ""),
+            "end": today.strftime("%Y%m%d"),
+        }
+        r = session.get(url, params=params, timeout=15)
+        if r.status_code != 200:
+            return 0
+        data = r.json()
+        if not data or "data" not in data or "klines" not in data["data"]:
+            return 0
+
+        added = 0
+        for line in data["data"]["klines"]:
+            parts = line.split(",")
+            if len(parts) < 12:
+                continue
+            k_date = parts[0]
+            if k_date in missing_dates:
+                try:
+                    adv = int(parts[11]) if parts[11] != "-" else 0
+                    decl = int(parts[12]) if parts[12] != "-" else 0
+                    flat_count = int(parts[13]) if len(parts) > 13 and parts[13] != "-" else 0
+                except (ValueError, IndexError):
+                    continue
+                cache[k_date] = {"up": adv, "down": decl, "flat": flat_count}
+                added += 1
+
+        if added:
+            _save_breadth_cache(cache)
+            print(f"  涨跌家数补全: {added}天")
+        return added
+    except Exception as e:
+        print(f"  涨跌家数补全失败(本地可能被反爬): {e}")
+        return 0
+
+
 def _get_breadth_for_date(date_str: str) -> dict | None:
     """获取指定日期的涨跌家数（从缓存），当天则尝试实时拉取。"""
     cache = _load_breadth_cache()
@@ -1179,6 +1242,7 @@ def run_collect(config: dict) -> str:
         exp_dates = _get_expiration_dates(year)
         a50_dates = _get_a50_expiration_dates(year)
         kline = _fetch_sse_daily_kline()
+        _backfill_breadth()
         exp_page = build_expiration_page(exp_dates, a50_dates, kline)
         (BASE / "expiration.html").write_text(exp_page, encoding="utf-8")
         print(f"  交割日表: 国内{len(exp_dates)}月 + A50{len(a50_dates)}月, 页面已保存")
