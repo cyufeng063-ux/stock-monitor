@@ -490,13 +490,12 @@ def _fetch_sse_daily_kline() -> dict[str, dict]:
 
 
 def _build_expiration_table(dates: list[dict], kline: dict[str, dict]) -> str:
-    """生成交割日表格 HTML。"""
+    """生成交割日表格 HTML（用于独立页面和主页摘要）。"""
     rows = ""
     for d in dates:
         date_str = d["date"]
         row_style = 'style="background:#fffbe6"' if d["is_today"] else ""
 
-        # 在日k线中查找该交割日或最近交易日的数据
         sse_info = ""
         if date_str in kline:
             k = kline[date_str]
@@ -509,7 +508,6 @@ def _build_expiration_table(dates: list[dict], kline: dict[str, dict]) -> str:
                 f'{( "+" if pct > 0 else "" )}{pct:.2f}%</span>'
             )
         elif d["is_past"]:
-            # 交割日不是交易日，找最近一个交易日
             sse_info = '<span style="color:#888;font-size:11px">非交易日</span>'
         else:
             sse_info = '<span style="color:#aaa">待发生</span>'
@@ -524,9 +522,15 @@ def _build_expiration_table(dates: list[dict], kline: dict[str, dict]) -> str:
               <td style="font-size:11px;color:#888">{highlight}</td>
             </tr>\n"""
 
+    return rows
+
+
+def _build_expiration_card(rows: str, year: str, link: bool = True) -> str:
+    """主页上的交割日摘要卡片（仅显示近期，带链接到独立页面）。"""
     return f"""<div class="card">
-    <div class="card-title">{dates[0]["date"][:4]}年 股指期货期权交割日
+    <div class="card-title">{year}年 股指期货期权交割日
       <span style="font-weight:normal;font-size:11px;color:#999;margin-left:8px">(IF/IH/IC/IM)</span>
+      <a href="expiration.html" style="float:right;font-size:12px;font-weight:normal;color:#2980b9;text-decoration:none">{'查看完整表格 →' if link else ''}</a>
     </div>
     <div style="overflow-x:auto">
     <table>
@@ -535,13 +539,74 @@ def _build_expiration_table(dates: list[dict], kline: dict[str, dict]) -> str:
     </div>
   </div>"""
 
+
+def build_expiration_page(dates: list[dict], kline: dict[str, dict]) -> str:
+    """生成独立的交割日页面。"""
+    year = dates[0]["date"][:4]
+    rows = _build_expiration_table(dates, kline)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 取当前上证点位
+    sse_current = ""
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if today_str in kline:
+        k = kline[today_str]
+        sse_current = f"上证指数 {k['close']:.2f}"
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>{year}年股指期货期权交割日</title>
+<style>
+  body {{ font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; background: #f5f6fa; padding: 20px; }}
+  .container {{ max-width: 700px; margin: 0 auto; }}
+  .header {{ background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 25px; border-radius: 12px 12px 0 0; text-align: center; }}
+  .header h1 {{ margin: 0; font-size: 22px; }}
+  .header p {{ margin: 8px 0 0; opacity: 0.7; font-size: 13px; }}
+  .card {{ background: #fff; margin: 0 0 20px; border-radius: 0 0 12px 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); overflow: hidden; }}
+  .card-title {{ background: #fafbfc; padding: 14px 20px; font-size: 16px; font-weight: bold; color: #2c3e50; border-bottom: 1px solid #eee; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+  th {{ background: #f8f9fa; padding: 10px 8px; text-align: left; font-weight: 600; color: #555; border-bottom: 2px solid #e9ecef; }}
+  td {{ padding: 10px 8px; border-bottom: 1px solid #f0f0f0; }}
+  tr:hover {{ background: #fafbfe; }}
+  .back {{ text-align: center; padding: 16px; }}
+  .back a {{ color: #2980b9; text-decoration: none; font-size: 14px; }}
+  .back a:hover {{ text-decoration: underline; }}
+  .note {{ background: #fff; padding: 14px 20px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); font-size: 12px; color: #888; line-height: 1.8; }}
+</style></head><body>
+<div class="container">
+  <div class="header">
+    <h1>{year}年股指期货期权交割日</h1>
+    <p>A股股指期货(IF/IH/IC/IM)及期权 — 每月第三个周五 &nbsp;|&nbsp; {sse_current}</p>
+  </div>
+  <div class="card">
+    <div class="card-title">交割日一览</div>
+    <div style="overflow-x:auto">
+    <table>
+      <tr><th>月份</th><th>交割日</th><th>星期</th><th>上证收盘/涨跌</th><th>状态</th></tr>
+{rows}    </table>
+    </div>
+  </div>
+  <div class="note">
+    <strong>说明</strong><br>
+    1. 股指期货期权交割日为每月第三个周五，遇节假日顺延（本表为理论日期）<br>
+    2. 上证数据为交割日当天收盘价及相对开盘涨跌幅<br>
+    3. 交割日前后市场可能出现较大波动，请注意风险
+  </div>
+  <div class="back">
+    <a href="index.html">← 返回主页</a>
+  </div>
+</div>
+</body></html>"""
+    return html
+
 # ═══════════════════════════════════════════════════════
 # HTML 邮件
 # ═══════════════════════════════════════════════════════
 
 def build_html(quotes: list[dict], announcements: list[dict],
                interpretations: dict = None,
-               expiration_html: str = "") -> str:
+               expiration_dates: list[dict] = None,
+               kline: dict[str, dict] = None) -> str:
     """拼装 HTML 邮件正文。"""
     interp = interpretations or {}
 
@@ -570,6 +635,13 @@ def build_html(quotes: list[dict], announcements: list[dict],
             </tr>"""
     else:
         quote_rows = '<tr><td colspan="11" style="text-align:center;color:#999">今日无行情数据（可能非交易日）</td></tr>'
+
+    # ── 交割日摘要 ──
+    expiration_html = ""
+    if expiration_dates and kline is not None:
+        rows = _build_expiration_table(expiration_dates, kline)
+        year_str = expiration_dates[0]["date"][:4]
+        expiration_html = _build_expiration_card(rows, year_str, link=True)
 
     # ── 公告列表（按发布时间排序，10分钟内整理在一起）──
     if announcements:
@@ -884,20 +956,23 @@ def run_collect(config: dict) -> str:
     announcements = fetch_announcements(codes)
 
     # 股指期货期权交割日
-    expiration_html = ""
+    exp_dates = []
+    kline = {}
     try:
         year = datetime.now().year
         exp_dates = _get_expiration_dates(year)
         kline = _fetch_sse_daily_kline()
-        expiration_html = _build_expiration_table(exp_dates, kline)
-        print(f"  交割日表: {len(exp_dates)} 个月")
+        # 生成独立交割日页面
+        exp_page = build_expiration_page(exp_dates, kline)
+        (BASE / "expiration.html").write_text(exp_page, encoding="utf-8")
+        print(f"  交割日表: {len(exp_dates)} 个月, 独立页面已保存")
     except Exception as e:
         print(f"  交割日表生成失败: {e}")
 
     ai_cfg = config.get("ai", {})
     interpretations = generate_interpretations(quotes, announcements, ai_cfg)
 
-    return build_html(quotes, announcements, interpretations, expiration_html)
+    return build_html(quotes, announcements, interpretations, exp_dates, kline)
 
 
 def run():
