@@ -517,20 +517,22 @@ def _send_expiration_reminder(domestic: list[dict], a50: list[dict],
         dt = date.fromisoformat(d["date"])
         for db in days_before:
             if today + timedelta(days=db) == dt:
-                label = "今天" if db == 0 else f"{db}天后（{d['date']}）"
+                label = "今天" if db == 0 else f"{db}天后（{d['date']} 周{d['weekday']}）"
                 reminders.append(
-                    f"{label}\n品种：国内股指期货期权 IF/IH/IC/IM\n"
-                    f"交割日：{d['date']} 周{d['weekday']} 15:00"
+                    f"【{label}】\n"
+                    f"品种：国内股指期货期权 IF/IH/IC/IM\n"
+                    f"     {d['date']} 周{d['weekday']} 15:00 到期交割"
                 )
 
     for a in a50:
         dt = date.fromisoformat(a["date"])
         for db in days_before:
             if today + timedelta(days=db) == dt:
-                label = "今天" if db == 0 else f"{db}天后（{a['date']}）"
+                label = "今天" if db == 0 else f"{db}天后（{a['date']} 周{a['weekday']}）"
                 reminders.append(
-                    f"{label}\n品种：富时中国A50 (SGX)\n"
-                    f"交割日：{a['date']} 周{a['weekday']}"
+                    f"【{label}】\n"
+                    f"品种：富时中国A50 (SGX)\n"
+                    f"     {a['date']} 周{a['weekday']} 到期交割"
                 )
 
     if not reminders:
@@ -538,13 +540,15 @@ def _send_expiration_reminder(domestic: list[dict], a50: list[dict],
         return
 
     msg = "\n---\n".join(reminders)
+    msg += "\n\n交割日前后波动往往加剧，务必小心出货，控制仓位。"
+
     title = "股指期货交割日提醒"
     if len(reminders) == 1:
         r0 = reminders[0]
         if "今天" in r0:
-            title = "今日交割日提醒"
+            title = "今日交割日 小心出货！"
         else:
-            title = "临近交割日提醒"
+            title = "临近交割日 注意风险"
 
     print(f"  [提醒] 发送推送: {len(reminders)} 条")
     try:
