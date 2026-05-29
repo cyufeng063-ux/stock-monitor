@@ -528,60 +528,51 @@ def _fetch_sse_daily_kline() -> dict[str, dict]:
 
 def _build_combined_expiration_table(domestic: list[dict], a50: list[dict],
                                      kline: dict[str, dict]) -> str:
-    """生成合并交割日表格（国内 + A50）。"""
-    rows = ""
-    today = None
+    """生成合并交割日表格（国内 + A50，各列独立上证涨跌）。"""
     from datetime import date
-    today = date.today()
 
-    for i, (d, a) in enumerate(zip(domestic, a50)):
-        # 判断是否有交割日（当天或接近）
+    def _sse_cell(date_str: str, is_past: bool) -> str:
+        if date_str in kline:
+            k = kline[date_str]
+            chg = k["close"] - k["open"]
+            pct = (chg / k["open"] * 100)
+            color = "#e74c3c" if pct > 0 else "#27ae60" if pct < 0 else "#666"
+            return (
+                f'{k["close"]:.2f} '
+                f'<span style="color:{color};font-size:11px">'
+                f'{( "+" if pct > 0 else "" )}{pct:.2f}%</span>'
+            )
+        if is_past:
+            return '<span style="color:#888;font-size:11px">休市</span>'
+        return '<span style="color:#aaa;font-size:11px">—</span>'
+
+    def _fmt_date(date_str, is_today_flag):
+        if is_today_flag:
+            return f'<span style="font-weight:bold;color:#c0392b">{date_str}</span>'
+        return date_str
+
+    rows = ""
+    for d, a in zip(domestic, a50):
         dom_today = d["is_today"]
         a50_today = a["is_today"]
         is_today = dom_today or a50_today
         row_style = 'style="background:#fffbe6"' if is_today else ""
 
-        # 上证数据：用国内交割日数据，若无则取A50交割日数据
-        sse_info = ""
-        data_date = d["date"] if d["date"] in kline else a["date"] if a["date"] in kline else ""
-        if data_date in kline:
-            k = kline[data_date]
-            chg = k["close"] - k["open"]
-            pct = (chg / k["open"] * 100)
-            color = "#e74c3c" if pct > 0 else "#27ae60" if pct < 0 else "#666"
-            sse_info = (
-                f'{k["close"]:.2f} '
-                f'<span style="color:{color};font-size:11px">'
-                f'{( "+" if pct > 0 else "" )}{pct:.2f}%</span>'
-            )
-        elif d["is_past"] or a["is_past"]:
-            sse_info = '<span style="color:#888;font-size:11px">—</span>'
-        else:
-            sse_info = '<span style="color:#aaa">待发生</span>'
-
-        # 备注
         tags = []
         if dom_today:
             tags.append("今日IF/IH/IC/IM交割")
         if a50_today:
             tags.append("今日A50交割")
         if not tags:
-            if d["is_past"]:
-                tags.append("已过")
-            else:
-                tags.append("未到")
-        note = " · ".join(tags)
-
-        # 交割日格式化（高亮今天）
-        def fmt_date(date_str, is_today_flag):
-            return f'<span style="font-weight:bold;color:#c0392b">{date_str}</span>' if is_today_flag else date_str
+            tags.append("已过" if d["is_past"] else "未到")
 
         rows += f"""            <tr {row_style}>
               <td>{d["month"]}月</td>
-              <td>{fmt_date(d["date"], dom_today)}<br><span style="color:#888;font-size:10px">{d["weekday"]}</span></td>
-              <td>{fmt_date(a["date"], a50_today)}<br><span style="color:#888;font-size:10px">{a["weekday"]}</span></td>
-              <td>{sse_info}</td>
-              <td style="font-size:11px;color:#888">{note}</td>
+              <td>{_fmt_date(d["date"], dom_today)}<br><span style="color:#888;font-size:10px">{d["weekday"]}</span></td>
+              <td>{_sse_cell(d["date"], d["is_past"])}</td>
+              <td>{_fmt_date(a["date"], a50_today)}<br><span style="color:#888;font-size:10px">{a["weekday"]}</span></td>
+              <td>{_sse_cell(a["date"], a["is_past"])}</td>
+              <td style="font-size:11px;color:#888">{' · '.join(tags)}</td>
             </tr>\n"""
 
     return rows
@@ -660,7 +651,7 @@ def build_expiration_page(dates: list[dict], a50_dates: list[dict],
     </div>
     <div style="overflow-x:auto">
     <table>
-      <tr><th>月份</th><th>国内 IF/IH/IC/IM</th><th>A50 (SGX)</th><th>上证收盘/涨跌</th><th>备注</th></tr>
+      <tr><th>月份</th><th>国内交割日</th><th>上证涨跌</th><th>A50交割日</th><th>上证涨跌</th><th>备注</th></tr>
 {rows}    </table>
     </div>
   </div>
@@ -669,7 +660,7 @@ def build_expiration_page(dates: list[dict], a50_dates: list[dict],
     <strong>说明</strong><br>
     1. 国内股指期货期权(IF/IH/IC/IM)交割日为每月第三个周五，遇节假日顺延<br>
     2. A50(富时中国A50指数期货)在新加坡SGX交易，交割日为每月最后营业日<br>
-    3. 上证数据优先取国内交割日数据，若为周末/假日则取A50交割日数据<br>
+    3. 上证涨跌为交割日当天收盘价相对开盘价的涨跌幅，日期休市则显示"休市"<br>
     4. 交割日前后市场可能出现较大波动，请注意风险
   </div>
   <div class="back">
