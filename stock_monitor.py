@@ -616,9 +616,8 @@ def _fetch_today_breadth() -> dict[str, int] | None:
 
 
 def _backfill_breadth() -> int:
-    """从东方财富历史K线补全涨跌家数缓存，返回补全条数。
-    本地可能被反爬，Actions环境正常。"""
-    from datetime import date, timedelta
+    """补全涨跌家数缓存，返回补全条数。
+    优先用push2his(东方财富历史K线)，本地被封则在Actions环境生效。"""
     cache = _load_breadth_cache()
     today = date.today()
     year_start = f"{today.year}-01-01"
@@ -637,7 +636,7 @@ def _backfill_breadth() -> int:
         print("  涨跌家数无需补全")
         return 0
 
-    # 尝试1: 东方财富历史K线 + 涨跌家数扩展字段
+    # 尝试push2his (东方财富历史K线扩展字段)
     try:
         url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
         params = {
@@ -649,73 +648,51 @@ def _backfill_breadth() -> int:
         }
         r = session.get(url, params=params, timeout=15)
         if r.status_code == 200:
-            data = r.json()
-            if data and "data" in data and "klines" in data["data"]:
-                klines = data["data"]["klines"]
+            data_json = r.json()
+            if data_json and "data" in data_json and "klines" in data_json["data"]:
+                klines = data_json["data"]["klines"]
                 if klines:
                     n_fields = len(klines[0].split(","))
+                    print(f"  push2his响应: {len(klines)}条K线, 每条{len(klines[0].split(','))}个字段")
                     added = 0
                     for line in klines:
                         parts = line.split(",")
                         k_date = parts[0]
                         if k_date in missing_dates:
-                            # 字段位置: [0]日期, .. [11]=f92上涨, [12]=f93下跌, [13]=f94平盘
-                            if len(parts) >= 12:
+                            # f51=日期, ..., f92=上涨家数(idx 11), f93=下跌家数(idx 12), f94=平盘(idx 13)
+                            if len(parts) >= 14:
                                 try:
-                                    adv = int(parts[11]) if parts[11] != "-" else 0
-                                    decl = int(parts[12]) if len(parts) > 12 and parts[12] != "-" else 0
-                                    flat_count = int(parts[13]) if len(parts) > 13 and parts[13] != "-" else 0
+                                    adv = int(parts[11]) if parts[11] not in ("", "-") else 0
+                                    decl = int(parts[12]) if parts[12] not in ("", "-") else 0
+                                    flat_count = int(parts[13]) if parts[13] not in ("", "-") else 0
                                 except (ValueError, IndexError):
+                                    continue
+                                cache[k_date] = {"up": adv, "down": decl, "flat": flat_count}
+                                added += 1
+                            elif len(parts) >= 12:
+                                # 尝试只有12个字段的情况
+                                try:
+                                    adv = int(parts[11]) if parts[11] not in ("", "-") else 0
+                                    decl = 0
+                                    flat_count = 0
+                                except ValueError:
                                     continue
                                 cache[k_date] = {"up": adv, "down": decl, "flat": flat_count}
                                 added += 1
                     if added:
                         _save_breadth_cache(cache)
-                    print(f"  涨跌家数补全(push2his): {added}天 (K线字段数={n_fields}, 缺失={len(missing_dates)})")
+                    print(f"  涨跌家数补全(push2his): {added}天 (字段数={n_fields}, 缺失={len(missing_dates)})")
                     return added
                 else:
                     print("  涨跌家数补全: push2his返回空klines")
             else:
-                print(f"  涨跌家数补全: push2his返回结构异常 {str(data)[:100]}")
+                print(f"  涨跌家数补全: push2his返回结构异常")
         else:
             print(f"  涨跌家数补全: push2his HTTP {r.status_code}")
     except Exception as e:
         print(f"  涨跌家数补全(push2his异常): {e}")
 
-    # 尝试2: 东方财富datacenter API
-    try:
-        url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-        params = {
-            "reportName": "RPT_DAILY_MARKET",
-            "columns": "ALL",
-            "pageNumber": 1, "pageSize": 300,
-            "source": "WEB", "client": "WEB",
-            "filter": f'(TRADE_DATE>=\'{today.year}-01-01\')',
-        }
-        r = session.get(url, params=params, timeout=15)
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("success") and data.get("result") and data["result"].get("data"):
-                added = 0
-                for row in data["result"]["data"]:
-                    k_date = str(row.get("TRADE_DATE", ""))[:10]
-                    if k_date in missing_dates:
-                        adv = int(row.get("ADVANCE_COUNT", row.get("UP_COUNT", 0)) or 0)
-                        decl = int(row.get("DECLINE_COUNT", row.get("DOWN_COUNT", 0)) or 0)
-                        flat_count = int(row.get("FLAT_COUNT", 0) or 0)
-                        if adv or decl:
-                            cache[k_date] = {"up": adv, "down": decl, "flat": flat_count}
-                            added += 1
-                if added:
-                    _save_breadth_cache(cache)
-                print(f"  涨跌家数补全(datacenter): {added}天")
-                return added
-            else:
-                print(f"  涨跌家数补全: datacenter结构异常 {str(data)[:100]}")
-    except Exception as e:
-        print(f"  涨跌家数补全(datacenter异常): {e}")
-
-    print(f"  涨跌家数补全: 所有方式均失败, 缺失{len(missing_dates)}天")
+    print(f"  涨跌家数补全: 无法获取, 缺失{len(missing_dates)}天的数据将随每日运行逐步补全")
     return 0
         return 0
 
