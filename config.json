@@ -1,0 +1,42 @@
+{
+  "_comment": "A股信息收集器配置 | stocks: 填入追踪的A股代码 | email: 配置后自动发邮件 | schedule: 配合Windows任务计划使用",
+
+  "stocks": [
+    {"code": "002940", "name": "昂立康"},
+    {"code": "603778", "name": "国晟科技"},
+    {"code": "603686", "name": "福龙马"},
+    {"code": "002384", "name": "东山精密"},
+    {"code": "300033", "name": "同花顺"},
+    {"code": "300450", "name": "先导智能"}
+  ],
+
+  "email": {
+    "_comment": "QQ邮箱需开启SMTP获取授权码",
+    "smtp_host": "smtp.qq.com",
+    "smtp_port": 587,
+    "sender": "你的邮箱@qq.com",
+    "password": "你的SMTP授权码",
+    "receivers": ["接收邮箱@qq.com"]
+  },
+
+  "ai": {
+    "_comment": "AI解读功能，使用DeepSeek API（兼容OpenAI格式），enabled=true开启",
+    "enabled": false,
+    "api_key": "你的DeepSeek API Key",
+    "api_url": "https://api.deepseek.com/v1/chat/completions",
+    "model": "deepseek-chat"
+  },
+
+  "notify": {
+    "_comment": "Server酱推送提醒，注册 serverchan.ftqq.com 获取 SendKey",
+    "enabled": false,
+    "sendkey": "你的SendKey",
+    "days_before": [0, 1]
+  },
+
+  "schedule": {
+    "_comment": "参考时间, 定时需配合系统计划任务",
+    "market_open_check": "09:30",
+    "market_close_summary": "15:30"
+  }
+}
