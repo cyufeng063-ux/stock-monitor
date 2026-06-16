@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Test CMD Task",
+			"type": "shell",
+			"command": "cmd.exe",
+			"args": [
+				"/c",
+				"echo hi"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}
