@@ -903,7 +903,16 @@ def build_expiration_page(dates: list[dict], a50_dates: list[dict],
 # ═══════════════════════════════════════════════════════
 
 def _get_hexin_v_token() -> str | None:
-    """生成同花顺问财 hexin-v token。"""
+    """生成同花顺问财 hexin-v token (优先用环境变量 WENCAI_COOKIE 中的 v 值)。"""
+    # 优先：从环境变量 WENCAI_COOKIE 提取 v 值（CI 稳定方案）
+    env_cookie = os.environ.get("WENCAI_COOKIE", "")
+    if env_cookie:
+        m = re.search(r'v=([^;]+)', env_cookie)
+        if m:
+            print("  使用环境变量 WENCAI_COOKIE 中的 v 值")
+            return m.group(1)
+
+    # 备选：本地用 pywencai + Node.js 生成
     try:
         import pywencai
         js_path = os.path.join(os.path.dirname(pywencai.__file__), 'hexin-v.bundle.js')
