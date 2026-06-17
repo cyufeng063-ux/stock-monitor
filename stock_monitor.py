@@ -990,18 +990,38 @@ def _fetch_wencai_review(codes: list[str]) -> dict[str, dict]:
         if isinstance(content, str):
             content = json.loads(content)
 
+        # 批量查询返回多个 component，每个包含不同指标列，需按股票代码合并
+        processed = set()
         for comp in content.get('components', []):
-            for row in comp.get('data', {}).get('datas', []):
+            datas = (comp.get('data', {}) or {}).get('datas', [])
+            for row in datas:
                 if not isinstance(row, dict):
                     continue
-                code = str(row.get('股票代码', ''))
-                if code not in results:
+                # 找代码列
+                code = ''
+                for key in row.keys():
+                    if '代码' in str(key):
+                        code = str(row.get(key, '')).replace('.SZ', '').replace('.SH', '').replace('.BJ', '')
+                        break
+                if not code or code not in results:
                     continue
-                results[code]['散户指数'] = str(row.get('dde散户数量', '—'))
-                results[code]['筹码集中度'] = str(row.get('集中度90', row.get('90%成本集中度', '—')))
-                results[code]['主力控盘力度'] = str(row.get('主力控盘比例', '—'))
-                results[code]['平均成本'] = str(row.get('平均成本', '—'))
-                print(f"  问财复盘 {code}: 完成")
+                # 直接从 row keys 匹配指标
+                for key, val in row.items():
+                    if val is None:
+                        continue
+                    ks = str(key)
+                    if '散户数量' in ks or ('散户' in ks and 'dde' in ks.lower()):
+                        results[code]['散户指数'] = str(val)
+                    elif '集中度90' in ks:
+                        results[code]['筹码集中度'] = str(val)
+                    elif '主力控盘' in ks:
+                        results[code]['主力控盘力度'] = str(val)
+                    elif '平均成本' in ks:
+                        results[code]['平均成本'] = str(val)
+                processed.add(code)
+
+        for code in processed:
+            print(f"  问财复盘 {code}: 完成")
 
         ok = sum(1 for v in results.values() if v.get('散户指数', '—') != '—')
         print(f"  问财复盘: {ok}/{len(codes)} 只有效数据")
