@@ -930,76 +930,75 @@ def _fetch_wencai_review(codes: list[str]) -> dict[str, dict]:
         print("  问财复盘: 无法生成hexin-v token，跳过复盘抓取")
         return results
 
+    # 同选股一样用生成的 token，不需要 Cookie
     headers = {
         'hexin-v': token,
         'User-Agent': session.headers['User-Agent'],
         'Content-Type': 'application/json',
     }
 
-    for code in codes:
-        question = f"{code} 今日 散户指数 筹码集中度 主力控盘力度 平均成本"
-        data = {
-            'add_info': '{"urp":{"scene":1}}',
-            'perpage': 1,
-            'page': 1,
-            'source': 'Ths_iwencai_Query',
-            'log_info': '{"input_type":"click"}',
-            'version': '2.0',
-            'secondary_intent': 'stock',
-            'question': question,
-        }
+    # 批量查询：所有股票 + 全部指标，一次请求（跟选股一样）
+    codes_str = ", ".join(codes)
+    question = f"{codes_str}, 量比, 散户数量, 筹码集中度90, 主力控盘比例, 筹码平均成本"
+    data = {
+        'add_info': '{"urp":{"scene":1,"company":1,"business":1},"contentType":"json","searchInfo":true}',
+        'perpage': len(codes) + 5,
+        'page': 1,
+        'source': 'Ths_iwencai_Xuangu',
+        'log_info': '{"input_type":"click"}',
+        'version': '2.0',
+        'secondary_intent': 'stock',
+        'question': question,
+    }
 
-        try:
-            r = session.post('http://www.iwencai.com/customized/chart/get-robot-data', json=data, headers=headers, timeout=20)
-            if r.status_code != 200:
-                print(f"  问财复盘 {code}: HTTP {r.status_code}")
+    try:
+        print(f"  问财复盘: 批量查询 {len(codes)} 只...")
+        # 403 多半是限流，等一会重试
+        for attempt in range(3):
+            r = session.post('http://www.iwencai.com/customized/chart/get-robot-data', json=data, headers=headers, timeout=30)
+            if r.status_code == 403 and attempt < 2:
+                wait = (attempt + 1) * 10
+                print(f"  问财复盘: 403 限流，{wait}秒后重试...")
+                time.sleep(wait)
+                # 刷新 token
+                token = _get_hexin_v_token()
+                if token:
+                    headers['hexin-v'] = token
                 continue
+            break
+        if r.status_code != 200:
+            print(f"  问财复盘: HTTP {r.status_code}")
+            return results
 
-            body = r.json()
-            content = body.get('data', {}).get('answer', [{}])[0].get('txt', [{}])[0].get('content', '')
-            if not content:
-                continue
-            if isinstance(content, str):
-                try:
-                    content = json.loads(content)
-                except Exception:
-                    pass
+        body = r.json()
+        if body.get('status_code') != 0:
+            print(f"  问财复盘: {body.get('status_msg', '')[:60]}")
+            return results
 
-            text_blob = ''
-            # 尝试提取文本部分
-            if isinstance(content, dict):
-                # 把所有字符串连接起来以便正则搜索
-                def _walk(o):
-                    s = ''
-                    if isinstance(o, str):
-                        return o + '\n'
-                    if isinstance(o, dict):
-                        for v in o.values():
-                            s += _walk(v)
-                    if isinstance(o, list):
-                        for v in o:
-                            s += _walk(v)
-                    return s
-                text_blob = _walk(content)
-            else:
-                text_blob = str(content)
+        content = body.get('data', {}).get('answer', [{}])[0].get('txt', [{}])[0].get('content', '')
+        if not content:
+            return results
+        if isinstance(content, str):
+            content = json.loads(content)
 
-            # 简单正则匹配数值或百分比
-            def _find(key):
-                m = re.search(re.escape(key) + r"[^\d\-\+\.%]*([\-\d\.]+%?)", text_blob)
-                if m:
-                    return m.group(1).strip()
-                return None
+        for comp in content.get('components', []):
+            for row in comp.get('data', {}).get('datas', []):
+                if not isinstance(row, dict):
+                    continue
+                code = str(row.get('股票代码', ''))
+                if code not in results:
+                    continue
+                results[code]['散户指数'] = str(row.get('dde散户数量', '—'))
+                results[code]['筹码集中度'] = str(row.get('集中度90', row.get('90%成本集中度', '—')))
+                results[code]['主力控盘力度'] = str(row.get('主力控盘比例', '—'))
+                results[code]['平均成本'] = str(row.get('平均成本', '—'))
+                print(f"  问财复盘 {code}: 完成")
 
-            for k in ("散户指数", "筹码集中度", "主力控盘力度", "平均成本"):
-                v = _find(k)
-                if v:
-                    results[code][k] = v
+        ok = sum(1 for v in results.values() if v.get('散户指数', '—') != '—')
+        print(f"  问财复盘: {ok}/{len(codes)} 只有效数据")
 
-            print(f"  问财复盘 {code}: 采集完成")
-        except Exception as e:
-            print(f"  问财复盘 {code} 异常: {e}")
-        time.sleep(0.6)
+    except Exception as e:
+        print(f"  问财复盘异常: {e}")
 
     return results
 
@@ -1224,27 +1223,11 @@ def build_html(quotes: list[dict], announcements: list[dict],
 
     # ── 行情表格 ──
     if quotes:
-        stock_ai = interp.get("stocks", {})
         quote_rows = ""
         for q in quotes:
             code = q['代码']
             pct = q.get("_涨跌数值", 0)
             color = "#e74c3c" if pct > 0 else "#27ae60" if pct < 0 else "#666"
-            ai_text = stock_ai.get(code, '')
-            ai_cell = f'<div style="color:#888;font-size:11px;font-style:italic;margin-top:2px">AI: {ai_text}</div>' if ai_text else ''
-            # 当日复盘内容
-            rev_html = ''
-            if reviews:
-                r = reviews.get(code, {})
-                if r:
-                    rev_html = (
-                        f"<div style=\"font-size:12px;line-height:1.3;color:#444;max-width:160px\">"
-                        f"散户指数: {r.get('散户指数','—')}<br>"
-                        f"筹码集中度: {r.get('筹码集中度','—')}<br>"
-                        f"主力控盘力度: {r.get('主力控盘力度','—')}<br>"
-                        f"平均成本: {r.get('平均成本','—')}"
-                        f"</div>"
-                    )
 
             quote_rows += f"""
             <tr id="row-{code}">
@@ -1257,11 +1240,35 @@ def build_html(quotes: list[dict], announcements: list[dict],
               <td id="low-{code}">{q.get('最低', '—')}</td>
               <td id="vol-{code}">{q.get('成交量', '—')}</td>
               <td id="amount-{code}">{q.get('成交额', '—')}</td>
-              <td style="color:#444;font-size:12px;max-width:160px">{rev_html}</td>
-              <td style="color:#666;font-size:11px;max-width:120px">{ai_text}</td>
             </tr>"""
     else:
-        quote_rows = '<tr><td colspan="11" style="text-align:center;color:#999">今日无行情数据（可能非交易日）</td></tr>'
+        quote_rows = '<tr><td colspan="9" style="text-align:center;color:#999">今日无行情数据（可能非交易日）</td></tr>'
+
+    # ── 当日复盘表格 ──
+    def _fmt_review(val) -> str:
+        """格式化复盘数值，保留2位小数。"""
+        if val is None or val == '—' or val == '':
+            return '—'
+        try:
+            return f"{float(val):.2f}"
+        except (ValueError, TypeError):
+            return str(val)
+
+    review_rows = ""
+    if reviews and quotes:
+        for q in quotes:
+            code = q['代码']
+            r = reviews.get(code, {})
+            review_rows += f"""
+            <tr id="rev-row-{code}">
+              <td>{code}<br><span style="color:#888;font-size:11px">{q['名称']}</span></td>
+              <td id="rev-retail-{code}">{_fmt_review(r.get('散户指数'))}</td>
+              <td id="rev-chip-{code}">{_fmt_review(r.get('筹码集中度'))}</td>
+              <td id="rev-ctrl-{code}">{_fmt_review(r.get('主力控盘力度'))}</td>
+              <td id="rev-cost-{code}">{_fmt_review(r.get('平均成本'))}</td>
+            </tr>"""
+    else:
+        review_rows = '<tr><td colspan="5" style="text-align:center;color:#999">暂无复盘数据（每日18:00后更新）</td></tr>'
 
     # ── 交割日链接 ──
     expiration_html = ""
@@ -1374,10 +1381,19 @@ def build_html(quotes: list[dict], announcements: list[dict],
         <div class="card-title">追踪股票行情</div>
         <div style="overflow-x:auto">
         <table>
-            <tr><th>代码/名称</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th><th>今开</th><th>最高</th><th>最低</th><th>成交量</th><th>成交额</th><th>当日复盘</th><th>AI解读</th></tr>
+            <tr><th>代码/名称</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th><th>今开</th><th>最高</th><th>最低</th><th>成交量</th><th>成交额</th></tr>
             {quote_rows}
         </table>
         </div>
+    </div>
+
+    <div class="card">
+    <div class="card-title">📝 当日复盘 <span style="font-size:12px;color:#888;font-weight:normal">数据时间: {now} &nbsp;|&nbsp; 来源: 同花顺问财</span></div>
+    <div style="overflow-x:auto">
+    <table>
+        <tr><th>代码/名称</th><th>散户指数</th><th>筹码集中度</th><th>主力控盘力度</th><th>平均成本</th></tr>
+{review_rows}    </table>
+    </div>
     </div>
 
   {expiration_html}
