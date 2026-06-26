@@ -3,21 +3,14 @@
 <title>选股结果</title>
 <style>
   body { font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; background: #f5f6fa; padding: 20px; }
-  .container { max-width: 1400px; margin: 0 auto; }
+  .container { max-width: 1200px; margin: 0 auto; }
   .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 25px; border-radius: 12px 12px 0 0; text-align: center; }
   .header h1 { margin: 0; font-size: 22px; }
   .header p { margin: 8px 0 0; opacity: 0.7; font-size: 13px; }
   .card { background: #fff; border-radius: 0 0 12px 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); overflow: hidden; }
-  .card-title { background: #fafbfc; padding: 14px 20px; font-size: 16px; font-weight: bold; color: #2c3e50; border-bottom: 1px solid #eee; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th { background: #f8f9fa; padding: 8px 6px; text-align: center; font-weight: 600; color: #555; border-bottom: 2px solid #e9ecef; white-space: nowrap; position: sticky; top: 0; }
-  td { padding: 7px 6px; border-bottom: 1px solid #f0f0f0; text-align: center; white-space: nowrap; }
-  td:first-child, td:nth-child(2) { text-align: left; }
-  tr:hover { background: #f0f4ff !important; }
+  .empty { text-align: center; padding: 60px 20px; color: #999; font-size: 16px; }
   .back { text-align: center; padding: 16px; }
   .back a { color: #2980b9; text-decoration: none; font-size: 14px; }
-  .note { background: #fff; padding: 14px 20px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); font-size: 12px; color: #888; line-height: 1.8; margin-top: 16px; }
-  .wrap { overflow-x: auto; }
 </style></head><body>
 <div class="container">
   <div class="header">
@@ -96,5 +89,7 @@
   <div class="back">
     <a href="index.html">← 返回主页</a>
   </div>
+  <div class="card"><div class="empty">今日无符合条件的股票</div></div>
+  <div class="back"><a href="index.html">← 返回主页</a></div>
 </div>
 </body></html>

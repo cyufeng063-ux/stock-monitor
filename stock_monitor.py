@@ -902,17 +902,43 @@ def build_expiration_page(dates: list[dict], a50_dates: list[dict],
 # 同花顺问财选股
 # ═══════════════════════════════════════════════════════
 
-def _get_hexin_v_token() -> str | None:
-    """生成同花顺问财 hexin-v token (优先用环境变量 WENCAI_COOKIE 中的 v 值)。"""
-    # 优先：从环境变量 WENCAI_COOKIE 提取 v 值（CI 稳定方案）
-    env_cookie = os.environ.get("WENCAI_COOKIE", "")
-    if env_cookie:
-        m = re.search(r'v=([^;]+)', env_cookie)
-        if m:
-            print("  使用环境变量 WENCAI_COOKIE 中的 v 值")
-            return m.group(1)
+# Cookie 文件路径 (与 wencai_scraper 共享，避免重复登录)
+# 优先级: 环境变量 > 本项目 cookies/ > wencai_scraper cookies/
+COOKIE_PATHS = [
+    BASE / "cookies" / "cookie.txt",
+    BASE.parent.parent.parent / "wencai_scraper" / "cookies" / "cookie.txt",  # ~/wencai_scraper
+    Path("cookies/cookie.txt"),
+]
 
-    # 备选：本地用 pywencai + Node.js 生成
+
+def _load_wencai_cookie() -> str | None:
+    """加载问财 Cookie，优先级：环境变量 > 本地文件。"""
+    # 1) 环境变量 WENCAI_COOKIE（CI 稳定方案）
+    env_cookie = os.environ.get("WENCAI_COOKIE", "")
+    if env_cookie and "v=" in env_cookie:
+        return env_cookie
+
+    # 2) 遍历所有可能路径
+    for path in COOKIE_PATHS:
+        try:
+            if path.exists():
+                cookie = path.read_text(encoding="utf-8").strip()
+                if cookie and "v=" in cookie:
+                    print(f"  加载 Cookie: {path}")
+                    return cookie
+        except Exception:
+            pass
+
+    return None
+
+
+def _get_hexin_v_token() -> str | None:
+    """生成同花顺问财 hexin-v token（通过 pywencai + Node.js 实时计算）。
+
+    注意：hexin-v 和 Cookie 中的 v= 是不同的值，前者是客户端计算的签名，
+    后者是服务端下发的 session token。两者都需要。
+    """
+    # 1) 用 pywencai + Node.js 生成 hexin-v（客户端签名，每次不同）
     try:
         import pywencai
         js_path = os.path.join(os.path.dirname(pywencai.__file__), 'hexin-v.bundle.js')
@@ -921,7 +947,50 @@ def _get_hexin_v_token() -> str | None:
             return r.stdout.strip()
     except Exception as e:
         print(f"  hexin-v token生成失败: {e}")
+
+    # 2) 备选：从 Cookie 提取 v 值
+    cookie = _load_wencai_cookie()
+    if cookie:
+        m = re.search(r'v=([^;]+)', cookie)
+        if m:
+            print("  使用 Cookie 中的 v 值作为 hexin-v (备选)")
+            return m.group(1)
+
+    # 3) 最后：环境变量
+    env_cookie = os.environ.get("WENCAI_COOKIE", "")
+    if env_cookie:
+        m = re.search(r'v=([^;]+)', env_cookie)
+        if m:
+            print("  使用环境变量 WENCAI_COOKIE 中的 v 值")
+            return m.group(1)
+
     return None
+
+
+def _get_wencai_headers() -> dict:
+    """构建问财 API 请求头（hexin-v + cookie + Referer）。
+
+    自 2026 年起问财加强了反爬：必须同时提供 hexin-v、完整 Cookie 和 Referer，
+    缺一不可。hexin-v 由 Node.js 客户端实时生成，Cookie 由浏览器登录后提取。
+    """
+    token = _get_hexin_v_token()
+    if not token:
+        return {}
+
+    headers = {
+        'hexin-v': token,
+        'User-Agent': session.headers['User-Agent'],
+        'Content-Type': 'application/json',
+        'Referer': 'https://www.iwencai.com/',
+    }
+
+    # 关键：附加完整 Cookie（否则 403）
+    cookie = _load_wencai_cookie()
+    if cookie:
+        headers['cookie'] = cookie
+        print("  问财: Cookie 认证已配置")
+
+    return headers
 
 
 def _fetch_wencai_review(codes: list[str]) -> dict[str, dict]:
@@ -930,21 +999,15 @@ def _fetch_wencai_review(codes: list[str]) -> dict[str, dict]:
     返回 {code: {"散户指数": val, "筹码集中度": val, ...}}。
     如果无法获取则对应值为"—"。
     """
-    token = _get_hexin_v_token()
     results: dict[str, dict] = {}
     for c in codes:
         results[c] = {"散户指数": "—", "筹码集中度": "—", "主力控盘力度": "—", "平均成本": "—"}
 
-    if not token:
-        print("  问财复盘: 无法生成hexin-v token，跳过复盘抓取")
+    headers = _get_wencai_headers()
+    if not headers:
+        print("  问财复盘: 无法获取认证信息（缺少 Cookie），跳过复盘抓取")
+        print("  提示: 请运行 python playwright_login.py 刷新 Cookie")
         return results
-
-    # 同选股一样用生成的 token，不需要 Cookie
-    headers = {
-        'hexin-v': token,
-        'User-Agent': session.headers['User-Agent'],
-        'Content-Type': 'application/json',
-    }
 
     # 批量查询：所有股票 + 全部指标，一次请求（跟选股一样）
     codes_str = ", ".join(codes)
@@ -962,17 +1025,17 @@ def _fetch_wencai_review(codes: list[str]) -> dict[str, dict]:
 
     try:
         print(f"  问财复盘: 批量查询 {len(codes)} 只...")
-        # 403 多半是限流，等一会重试
+        # 403/401 重试：刷新 Cookie 后重试
         for attempt in range(3):
-            r = session.post('http://www.iwencai.com/customized/chart/get-robot-data', json=data, headers=headers, timeout=30)
-            if r.status_code == 403 and attempt < 2:
+            r = session.post('https://www.iwencai.com/customized/chart/get-robot-data', json=data, headers=headers, timeout=30)
+            if r.status_code in (401, 403) and attempt < 2:
                 wait = (attempt + 1) * 10
-                print(f"  问财复盘: 403 限流，{wait}秒后重试...")
+                print(f"  问财复盘: {r.status_code} 认证失败，{wait}秒后刷新 Cookie 重试...")
                 time.sleep(wait)
-                # 刷新 token
-                token = _get_hexin_v_token()
-                if token:
-                    headers['hexin-v'] = token
+                # 刷新完整 Cookie + token
+                headers = _get_wencai_headers()
+                if not headers:
+                    break
                 continue
             break
         if r.status_code != 200:
@@ -1034,19 +1097,13 @@ def _fetch_wencai_review(codes: list[str]) -> dict[str, dict]:
 
 def _fetch_screening_stocks() -> list[dict] | None:
     """从同花顺问财获取选股结果，返回股票数据列表。"""
-    token = _get_hexin_v_token()
-    if not token:
-        print("  选股: 无法获取token")
+    headers = _get_wencai_headers()
+    if not headers:
+        print("  选股: 无法获取认证信息（缺少 Cookie）")
         return None
 
     query = ("MACD金叉或KDJ金叉；放量上涨；换手率大于1；"
              "散户指数小于10；市值大于50亿；站上5日线或站上10日线")
-
-    headers = {
-        'hexin-v': token,
-        'User-Agent': session.headers['User-Agent'],
-        'Content-Type': 'application/json',
-    }
 
     data = {
         'add_info': '{"urp":{"scene":1,"company":1,"business":1},"contentType":"json","searchInfo":true}',
@@ -1061,7 +1118,7 @@ def _fetch_screening_stocks() -> list[dict] | None:
 
     try:
         r = session.post(
-            'http://www.iwencai.com/customized/chart/get-robot-data',
+            'https://www.iwencai.com/customized/chart/get-robot-data',
             json=data, headers=headers, timeout=30
         )
         if r.status_code != 200:
@@ -1093,9 +1150,9 @@ def _fetch_screening_stocks() -> list[dict] | None:
                 url_params = {k: v[0] if len(v) == 1 else v
                               for k, v in parse_qs(parsed.query).items()}
                 r2 = session.post(
-                    'http://www.iwencai.com/gateway/urp/v7/landing/getDataList',
+                    'https://www.iwencai.com/gateway/urp/v7/landing/getDataList',
                     data={**url_params, 'perpage': 100, 'page': 1},
-                    headers={'hexin-v': token, 'User-Agent': session.headers['User-Agent']},
+                    headers=headers,
                     timeout=30
                 )
                 if r2.status_code == 200:
