@@ -3,21 +3,47 @@
 <title>选股结果</title>
 <style>
   body { font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; background: #f5f6fa; padding: 20px; }
-  .container { max-width: 1200px; margin: 0 auto; }
+  .container { max-width: 1400px; margin: 0 auto; }
   .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 25px; border-radius: 12px 12px 0 0; text-align: center; }
   .header h1 { margin: 0; font-size: 22px; }
   .header p { margin: 8px 0 0; opacity: 0.7; font-size: 13px; }
   .card { background: #fff; border-radius: 0 0 12px 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); overflow: hidden; }
-  .empty { text-align: center; padding: 60px 20px; color: #999; font-size: 16px; }
+  .card-title { background: #fafbfc; padding: 14px 20px; font-size: 16px; font-weight: bold; color: #2c3e50; border-bottom: 1px solid #eee; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: #f8f9fa; padding: 8px 6px; text-align: center; font-weight: 600; color: #555; border-bottom: 2px solid #e9ecef; white-space: nowrap; position: sticky; top: 0; }
+  td { padding: 7px 6px; border-bottom: 1px solid #f0f0f0; text-align: center; white-space: nowrap; }
+  td:first-child, td:nth-child(2) { text-align: left; }
+  tr:hover { background: #f0f4ff !important; }
   .back { text-align: center; padding: 16px; }
   .back a { color: #2980b9; text-decoration: none; font-size: 14px; }
+  .note { background: #fff; padding: 14px 20px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); font-size: 12px; color: #888; line-height: 1.8; margin-top: 16px; }
+  .wrap { overflow-x: auto; }
 </style></head><body>
 <div class="container">
   <div class="header">
     <h1>同花顺问财选股</h1>
-    <p>MACD金叉/KDJ金叉 · 放量上涨 · 换手&gt;1% · 散户指数&lt;10 · 市值&gt;50亿 · 站上5/10日线</p>
+    <p>MACD金叉/KDJ金叉 · 放量上涨 · 换手&gt;1% · 散户指数&lt;10 · 市值&gt;50亿 · 站上5/10日线 &nbsp;|&nbsp; 生成时间: 2026-08-13 14:00:48</p>
   </div>
-  <div class="card"><div class="empty">今日无符合条件的股票</div></div>
-  <div class="back"><a href="index.html">← 返回主页</a></div>
+  <div class="card">
+    <div class="card-title">选股结果: 3 只</div>
+    <div class="wrap">
+    <table>
+      <tr><th>uid</th><th>took</th><th>total</th><th>summary_content</th><th>source</th><th>title_content</th><th>url</th><th>jumpUrl</th></tr>
+<tr style="background:#fafbfe"><td>aa55fcb1fb64eaa5</td><td>1633</td><td>3</td><td>4 Feb 1979 · MACD指标是根据均线的构造原理，对股票价格的收盘价进行平滑处理，求出算术平均值以后再进行计算而得到的，是一 …</td><td>https://baike.baidu.com › item › MACD</td><td>MACD指标_百度百科</td><td>https://baike.baidu.com/item/MACD%E6%8C%87%E6%A0%87/6271283</td><td>https://baike.baidu.com/item/MACD%E6%8C%87%E6%A0%87/6271283</td></tr>
+<tr ><td>c83b99ff3d14979d</td><td>1633</td><td>3</td><td>15 Feb 2023 · MACD指标是一个非常重要的技术指标，经常被交易者用来研判价格变化的强度大小、方向转换、能量变化，甚至趋势 …</td><td>https://zhuanlan.zhihu.com</td><td>一文教你看懂被称为“万千指标之王”的指标——MACD</td><td>https://zhuanlan.zhihu.com/p/606663690</td><td>https://zhuanlan.zhihu.com/p/606663690</td></tr>
+<tr style="background:#fafbfe"><td>65c8453477d95a74</td><td>1633</td><td>3</td><td>21 Apr 2020 · MACD即 指数平滑异同移动平均线 （Moving Average Convergence Divergence，macd）是股票交易中一种常见的 技 …</td><td>https://zhuanlan.zhihu.com</td><td>什么是MACD？MACD指标详解，四大买入形态和四大卖出形态</td><td>https://zhuanlan.zhihu.com/p/134077409</td><td>https://zhuanlan.zhihu.com/p/134077409</td></tr>
+    </table>
+    </div>
+  </div>
+  <div class="note">
+    <strong>说明</strong><br>
+    1. 数据来源：同花顺问财 (iwencai.com)<br>
+    2. 选股条件：MACD金叉或KDJ金叉；放量上涨；换手率大于1%；散户指数小于10；市值大于50亿；站上5日线或站上10日线<br>
+    3. 数据仅供参考，不构成投资建议<br>
+    4. 每日定时更新，可在开盘后查看最新结果
+  </div>
+  <div class="back">
+    <a href="index.html">← 返回主页</a>
+  </div>
 </div>
 </body></html>
